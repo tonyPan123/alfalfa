@@ -32,12 +32,23 @@
 
 #include "yuv4mpeg.hh"
 #include "paranoid.hh"
+#include "encoder.hh"
+#include "display.hh"
+#include "ivf_reader.hh"
+#include "poller.hh"
+#include "socketpair.hh"
+#include "socket.hh"
+#include "packet.hh"
+#include "pacer.hh"
 
 using namespace std;
+using namespace std::chrono;
+using namespace PollerShortNames;
+
 
 void usage( const char *argv0 )
 {
-  cerr << "Usage: " << argv0 << " INPUT FPS" << endl;
+  cerr << "Usage: " << argv0 << " INPUT FPS HOST PORT CONNECTION_ID" << endl;
 }
 
 int main( int argc, char *argv[] )
@@ -53,7 +64,9 @@ int main( int argc, char *argv[] )
   }
 
   /* open the YUV4MPEG input */
-  YUV4MPEGReader input { argv[ 1 ] };
+  //YUV4MPEGReader input { argv[ 1 ] };
+
+  IVFReader input {argv[1]};
 
   /* parse the # of frames per second of playback */
   unsigned int frames_per_second = paranoid::stoul( argv[ 2 ] );
@@ -65,28 +78,115 @@ int main( int argc, char *argv[] )
 
   auto next_frame_is_due = chrono::system_clock::now();
 
-  bool initialized = false;
+  // Test encoder
+  Encoder base_encoder { input.display_width(), input.display_height(),
+                         false /* two-pass */, REALTIME_QUALITY };
+
+  auto encode_pipe = UnixDomainSocket::make_pair();
+
+    /* construct Socket for outgoing datagrams */
+  UDPSocket socket;
+  socket.connect( Address( "0", "8888" ) );
+  socket.set_timestamps();
+
+  /* get connection_id */
+  const uint16_t connection_id = 1337;
+
+  Poller poller;
+  Pacer pacer;
+
+  /* counter variable */
+  uint32_t frame_no = 0;
+  system_clock::time_point last_sent = system_clock::now();
+
+  poller.add_action( Poller::Action( encode_pipe.second, Direction::In,
+    [&]() -> Result {
+      encode_pipe.second.read();
+
+      /* wait until next frame is due */
+      this_thread::sleep_until( next_frame_is_due );
+      next_frame_is_due += interval_between_frames;
+
+
+      const Optional<RasterHandle> raster = input.get_next_frame();
+
+      if ( not raster.initialized() ) {
+        return { ResultType::Exit, EXIT_FAILURE };
+      }
+
+      //const BaseRaster& rh = raster.get();
+      //display.draw(rh);
+    
+      auto source_minihash = base_encoder.minihash();
+      vector<uint8_t> output = base_encoder.encode_with_quantizer( raster.get(), 100);
+      auto target_minihash = base_encoder.minihash();
+      //cout << rh.display_width() << " " << rh.display_height() << " " << output.size() << " " << endl;
+
+      FragmentedFrame ff { connection_id, source_minihash, target_minihash,
+                           frame_no,
+                           static_cast<uint32_t>( duration_cast<microseconds>( system_clock::now() - last_sent ).count() ),
+                           output};
+
+      
+      for ( const auto & packet : ff.packets() ) {
+        pacer.push( packet.to_string(), 2000u );
+      } 
+
+      last_sent = system_clock::now();
+      ++frame_no;
+
+      encode_pipe.first.write( "1" );
+
+      return ResultType::Continue;
+    } ) 
+  );
+
+  poller.add_action( Poller::Action( socket, Direction::In,
+    [&]()
+    {
+      auto packet = socket.recv();
+      AckPacket ack( packet.payload );
+
+      if ( ack.connection_id() != connection_id ) {
+        /* this is not an ack for this session! */
+        return ResultType::Continue;
+      }
+
+      cout << "Ack!" << ack.frame_no() <<" "<< ack.fragment_no() << endl;
+
+      return ResultType::Continue;
+    } )
+  );
+
+  poller.add_action( Poller::Action( socket, Direction::Out, [&]() {
+        assert( pacer.ms_until_due() == 0 );
+
+        while ( pacer.ms_until_due() == 0 ) {
+          assert( not pacer.empty() );
+          //cout << "sent!" << endl;
+          socket.send( pacer.front() );
+          pacer.pop();
+        }
+
+        return ResultType::Continue;
+    }, [&]() { return pacer.ms_until_due() == 0; } ) );
+
+  
+
+  // Start!!!
+  encode_pipe.first.write( "1" );
+
   while ( true ) {
-    /* wait until next frame is due */
-    this_thread::sleep_until( next_frame_is_due );
-    next_frame_is_due += interval_between_frames;
+    const auto poll_result = poller.poll( 2000u );
+    if ( poll_result.result == Poller::Result::Type::Exit ) {
+      if ( poll_result.exit_status ) {
+        //cerr << "Connection error." << endl;
+        continue;
+      }
 
-    /* get the next frame to send */
-    const Optional<RasterHandle> raster = input.get_next_frame();
-    if ( not raster.initialized() ) {
-      break; /* eof */
+      return poll_result.exit_status;
     }
-
-    /* send the file header if we haven't already */
-    if ( not initialized ) {
-      auto file_header = YUV4MPEGHeader( raster.get() );
-      file_header.fps_numerator = frames_per_second;
-      file_header.fps_denominator = 1;
-      stdout.write( file_header.to_string() );
-      initialized = true;
-    }
-
-    /* send the frame */
-    YUV4MPEGFrameWriter::write( raster.get(), stdout );
   }
+
+  return EXIT_FAILURE;
 }
