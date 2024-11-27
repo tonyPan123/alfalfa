@@ -29,6 +29,7 @@
 #include <iostream>
 #include <chrono>
 #include <thread>
+#include <unordered_map>
 
 #include "yuv4mpeg.hh"
 #include "paranoid.hh"
@@ -40,6 +41,7 @@
 #include "socket.hh"
 #include "packet.hh"
 #include "pacer.hh"
+#include "cong_ctrl.hh"
 
 using namespace std;
 using namespace std::chrono;
@@ -97,7 +99,10 @@ int main( int argc, char *argv[] )
 
   /* counter variable */
   uint32_t frame_no = 0;
+  auto start = chrono::system_clock::now();
   system_clock::time_point last_sent = system_clock::now();
+  unordered_map<uint32_t, unordered_map<uint16_t, uint32_t>> pkt_nums; // TODO: in packet or map?
+  unordered_map<uint32_t, unordered_map<uint16_t, uint32_t>> pkt_sent_time;
 
   /*TODO: Move into the congestion control class */
   bool initialized = false;
@@ -106,10 +111,6 @@ int main( int argc, char *argv[] )
   //uint32_t loss = 0; // # of pkts
   typedef double Time;		 
   Time min_rtt = 0; // ms
-
-
-
-  auto start = chrono::system_clock::now();
 
 
   poller.add_action( Poller::Action( encode_pipe.second, Direction::In,
@@ -152,7 +153,7 @@ int main( int argc, char *argv[] )
 
       FragmentedFrame ff { connection_id, source_minihash, target_minihash,
                            frame_no,
-                           static_cast<uint32_t>( duration_cast<microseconds>( system_clock::now() - last_sent ).count() ),
+                           static_cast<uint32_t>( duration_cast<milliseconds>( system_clock::now() - last_sent).count() ),
                            output};
 
       // Sent out all the packets instanteneously 

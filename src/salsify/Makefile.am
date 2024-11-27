@@ -1,7 +1,7 @@
-AM_CPPFLAGS = -I$(srcdir)/../util -I$(srcdir)/../decoder -I$(srcdir)/../display -I$(srcdir)/../input -I$(srcdir)/../encoder -I$(srcdir)/../net $(X264_CFLAGS) $(CXX11_FLAGS)
+AM_CPPFLAGS = -I$(srcdir)/../cong_ctrl -I$(srcdir)/../util -I$(srcdir)/../decoder -I$(srcdir)/../display -I$(srcdir)/../input -I$(srcdir)/../encoder -I$(srcdir)/../net $(X264_CFLAGS) $(CXX11_FLAGS)
 AM_CXXFLAGS = $(PICKY_CXXFLAGS) $(NODEBUG_CXXFLAGS)
 AM_LDFLAGS = $(STATIC_BUILD_FLAG)
-BASE_LDADD = ../input/libalfalfainput.a ../decoder/libalfalfadecoder.a ../util/libalfalfautil.a $(X264_LIBS) $(JPEG_LIBS)
+BASE_LDADD = ../cong_ctrl/libalfalfacong.a ../input/libalfalfainput.a ../decoder/libalfalfadecoder.a ../util/libalfalfautil.a $(X264_LIBS) $(JPEG_LIBS)
 
 VP8PLAY_BUILD :=
 if BUILDVP8PLAY
@@ -21,7 +21,7 @@ salsify_receiver_LDFLAGS = -pthread
 
 fake_webcam_SOURCES = fake-webcam.cc
 fake_webcam_CPPFLAGS = $(AM_CPPFLAGS) $(GLU_CFLAGS) $(GLEW_CFLAGS) $(GLFW3_CFLAGS)
-fake_webcam_LDADD = ../net/libnet.a ../encoder/libalfalfaencoder.a ../display/libalfalfadisplay.a $(BASE_LDADD) $(GLU_LIBS) $(GLEW_LIBS) $(GLFW3_LIBS)
+fake_webcam_LDADD =  ../cong_ctrl/libalfalfacong.a ../net/libnet.a ../encoder/libalfalfaencoder.a ../display/libalfalfadisplay.a $(BASE_LDADD) $(GLU_LIBS) $(GLEW_LIBS) $(GLFW3_LIBS)
 fake_webcam_LDFLAGS = -pthread
 
 real_webcam_SOURCES = real-webcam.cc
