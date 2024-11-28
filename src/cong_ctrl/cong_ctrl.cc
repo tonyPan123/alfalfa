@@ -9,7 +9,7 @@ void CongCtrl::onACK(SeqNum ack, Time rtt) {
         cum_segs_delivered += 1;
     }
     // new rtt only takes effect at next step
-    beliefs.next_min_rtt = std::min(beliefs.next_min_rtt, rtt);
-    
+    beliefs.min_rtt = std::min(beliefs.min_rtt, rtt);
+    std::cout << "New rtt is " << beliefs.min_rtt << std::endl;
     return;
 }

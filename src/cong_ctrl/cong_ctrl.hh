@@ -3,9 +3,11 @@
 #ifndef CONG_CTRL_HH
 #define CONG_CTRL_HH
 
+#include <iostream>
 #include <boost/circular_buffer.hpp>
 
 typedef double Time;		  // ms (cumulative)
+typedef double TimeDelta;		  // ms (cumulative)
 typedef int SeqNum;		  // Pkts
 typedef double SegsRate;	  // Pkts per rtprop
 class CongCtrl
@@ -19,6 +21,7 @@ class CongCtrl
         static constexpr SegsRate MAX_BANDWIDTH = 1000;
         static constexpr SeqNum MIN_BUFFER = 5;
         static constexpr SeqNum MAX_BUFFER = 1000;
+        static constexpr TimeDelta MILLI_TO_MICRO = 1e3;
 
         // Entry to be filled into rust repo
         struct History {
@@ -34,7 +37,7 @@ class CongCtrl
         struct BeliefBound {
 
             Time min_rtt;
-            Time next_min_rtt; // min_rtt potentially updated during the current belief
+            //Time next_min_rtt; // min_rtt potentially updated during the current belief
 
 		    SegsRate min_c;
 		    SegsRate max_c;
@@ -47,7 +50,7 @@ class CongCtrl
 
             BeliefBound() // change to query rust repo
                 : min_rtt(MAX_DELAY), 
-                  next_min_rtt(MAX_DELAY), 
+                  //next_min_rtt(MAX_DELAY), 
                   min_c(MIN_BANDWIDTH),
                   max_c(MAX_BANDWIDTH),
                   min_b(MIN_BUFFER),
@@ -80,7 +83,7 @@ class CongCtrl
 
         void onACK(SeqNum ack, Time rtt);
 
-        double get_packet_interval() { return beliefs.min_rtt / beliefs.min_c; }
+        double get_action_intertime() { return beliefs.min_rtt; } // milli seconds
 };
 
 #endif

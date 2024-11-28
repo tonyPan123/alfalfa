@@ -99,19 +99,12 @@ int main( int argc, char *argv[] )
 
   /* counter variable */
   uint32_t frame_no = 0;
-  auto start = chrono::system_clock::now();
+  SeqNum pkt_no = 0;
+  //auto start = chrono::system_clock::now();
   system_clock::time_point last_sent = system_clock::now();
-  unordered_map<uint32_t, unordered_map<uint16_t, uint32_t>> pkt_nums; // TODO: in packet or map?
-  unordered_map<uint32_t, unordered_map<uint16_t, uint32_t>> pkt_sent_time;
-
-  /*TODO: Move into the congestion control class */
-  bool initialized = false;
-  uint32_t arrival = 0; // # of pkts
-  uint32_t service = 0; // # of pkts
-  //uint32_t loss = 0; // # of pkts
-  typedef double Time;		 
-  Time min_rtt = 0; // ms
-
+  unordered_map<uint32_t, unordered_map<uint16_t, SeqNum>> pkt_nums; // TODO: in packet or map?
+  unordered_map<SeqNum, system_clock::time_point> pkt_sent_time;
+  CongCtrl cc; 
 
   poller.add_action( Poller::Action( encode_pipe.second, Direction::In,
     [&]() -> Result {
@@ -120,11 +113,6 @@ int main( int argc, char *argv[] )
       /* wait until next frame is due */
       //this_thread::sleep_until( next_frame_is_due );
       //next_frame_is_due += interval_between_frames;
-      std::chrono::duration<double, std::ratio<1, 1000>> diff = (system_clock::now() - last_sent);
-      if (diff.count() < min_rtt) {
-        encode_pipe.first.write( "1" );
-        return ResultType::Continue;
-      }
       // TODO: minRtt passed, update belief bound!
 
 
@@ -132,6 +120,8 @@ int main( int argc, char *argv[] )
       const Optional<RasterHandle> raster = input.get_next_frame();
 
       if ( not raster.initialized() ) {
+        //std::chrono::duration<double> diff = (system_clock::now() - start);
+        //cout << "Spent: " << diff.count() << endl;
         return { ResultType::Exit, EXIT_FAILURE };
       }
 
@@ -139,13 +129,7 @@ int main( int argc, char *argv[] )
       //display.draw(rh);
     
       auto source_minihash = base_encoder.minihash();
-      vector<uint8_t> output;
-      if (not initialized) {
-        // Probe with least amount of frames to get min RTT
-        output = base_encoder.encode_with_quantizer( raster.get(), 127);
-      } else {
-        output = base_encoder.encode_with_quantizer( raster.get(), 127);
-      }
+      vector<uint8_t> output = base_encoder.encode_with_quantizer( raster.get(), 127);
       // Add reed-solomon code here 
 
       auto target_minihash = base_encoder.minihash();
@@ -156,86 +140,81 @@ int main( int argc, char *argv[] )
                            static_cast<uint32_t>( duration_cast<milliseconds>( system_clock::now() - last_sent).count() ),
                            output};
 
+      last_sent = system_clock::now();
+      //std::chrono::duration<double> diff = (system_clock::now() - last_sent);
+      //cout << "Just encoding: " << frame_no << " " << diff.count() << endl;
       // Sent out all the packets instanteneously 
       for ( const auto & packet : ff.packets() ) {
-        //pacer.push( packet.to_string(), 0 );
-        socket.send( packet.to_string() );
-        arrival += 1;
+        pacer.push( packet.to_string(), 0);
+        pkt_nums[packet.frame_no()][packet.fragment_no()] = pkt_no;
+        ++pkt_no;
+        //socket.send( packet.to_string() );
       } 
 
-      last_sent = system_clock::now();
       ++frame_no;
-      if (initialized) {
-        encode_pipe.first.write( "1" );
-      }
 
       return ResultType::Continue;
     } ) 
   );
+
+  SeqNum sent_pkt_count = 0;
+  system_clock::time_point last_sent_pkt = system_clock::now();
+
+  poller.add_action( Poller::Action( socket, Direction::Out, [&]() {
+      assert( pacer.ms_until_due() == 0 );
+
+      while ( pacer.ms_until_due() == 0 ) {
+        assert( not pacer.empty() );
+         //cout << "sent!" << endl;
+        socket.send( pacer.front() );
+        pacer.pop();
+        pkt_sent_time[sent_pkt_count] = system_clock::now();
+        ++sent_pkt_count;
+      }
+      last_sent_pkt = system_clock::now();
+
+      return ResultType::Continue;
+  }, [&]() { return pacer.ms_until_due() == 0; } ) );
+
+
+  // only send new frames after min_rtt
+  poller.add_action( Poller::Action( encode_pipe.first, Direction::Out, [&]() {
+      encode_pipe.first.write( "1" );
+      return ResultType::Continue;
+    }, [&]() { 
+      std::chrono::duration<double, std::ratio<1,1000>> diff = (system_clock::now() - last_sent_pkt); // in millis
+      return pacer.empty() && diff.count() >= cc.get_action_intertime(); 
+  } ) );
+
 
   poller.add_action( Poller::Action( socket, Direction::In,
     [&]()
     {
       auto packet = socket.recv();
       AckPacket ack( packet.payload );
-      
-      if (ack.frame_no() == 80) {
-        std::chrono::duration<double> diff = (system_clock::now() - start);
-        cout << "Spent: " << diff.count() << endl;
-      }
-
 
       if ( ack.connection_id() != connection_id ) {
         /* this is not an ack for this session! */
         return ResultType::Continue;
       }
 
-      service += 1;
       cout << "Ack!" << ack.frame_no() <<" "<< ack.fragment_no() << endl;
 
       // Need also to take loss into account
       // Need to check content of the pkt to detect dup
-      if (arrival == service) {
-        if (not initialized) {
-          initialized = true;
-          std::chrono::duration<double, std::ratio<1,1000>> diff = (system_clock::now() - last_sent);
-          min_rtt = diff.count();
-          cout << "Initial min_rtt is [] " << min_rtt << endl;
-          encode_pipe.first.write( "1" );
-        } else {
-          std::chrono::duration<double, std::ratio<1,1000>> diff = (system_clock::now() - last_sent);
-          if (diff.count() < min_rtt) {
-            min_rtt = diff.count();
-            cout << "Updated min_rtt is [] " << min_rtt << endl;
-          }  
-        }
-      }
+      uint32_t pkt_num = pkt_nums[ack.frame_no()][ack.fragment_no()];
+      std::chrono::duration<double, std::ratio<1,1000>> diff = (system_clock::now() - pkt_sent_time[pkt_num]); // in millis
+      cc.onACK(pkt_num, diff.count());
 
       return ResultType::Continue;
     } )
   );
-/*
-  poller.add_action( Poller::Action( socket, Direction::Out, [&]() {
-        assert( pacer.ms_until_due() == 0 );
-
-        while ( pacer.ms_until_due() == 0 ) {
-          assert( not pacer.empty() );
-          //cout << "sent!" << endl;
-          socket.send( pacer.front() );
-          arrival += 1;
-          pacer.pop();
-        }
-
-        return ResultType::Continue;
-    }, [&]() { return pacer.ms_until_due() == 0; } ) );
-*/
-  
 
   // Start!!!
   encode_pipe.first.write( "1" );
 
   while ( true ) {
-    const auto poll_result = poller.poll( 2000u );
+    const auto poll_result = poller.poll(-1);
     if ( poll_result.result == Poller::Result::Type::Exit ) {
       if ( poll_result.exit_status ) {
         //cerr << "Connection error." << endl;
@@ -244,6 +223,8 @@ int main( int argc, char *argv[] )
 
       return poll_result.exit_status;
     }
+    // Advanced to next action? 
+    
   }
 
   return EXIT_FAILURE;
