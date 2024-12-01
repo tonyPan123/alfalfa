@@ -47,6 +47,26 @@ using namespace std;
 using namespace std::chrono;
 using namespace PollerShortNames;
 
+struct From_Rust {
+  int a;
+  int b;
+};
+/*
+struct BeliefBound {
+    double min_c;
+    double max_c;
+    double min_b;
+    double max_b;
+    double min_q;
+    double max_q;
+};
+
+extern "C" {
+    //From_Rust rust_function(From_Rust*);
+    struct BeliefBound compute_belief_bounds_c_test();
+    
+}
+*/
 
 void usage( const char *argv0 )
 {
@@ -54,7 +74,10 @@ void usage( const char *argv0 )
 }
 
 int main( int argc, char *argv[] )
-{
+{ //From_Rust in = {true, 1000};
+  //From_Rust ret = rust_function(&in);
+  //BeliefBound bb = compute_belief_bounds_c_test();
+  //cout << "Pidan: " << bb.min_c << " " << bb.max_c << endl; 
   /* check the command-line arguments */
   if ( argc < 1 ) { /* for sticklers */
     abort();
@@ -88,7 +111,7 @@ int main( int argc, char *argv[] )
 
     /* construct Socket for outgoing datagrams */
   UDPSocket socket;
-  socket.connect( Address( "0", "8888" ) );
+  socket.connect( Address( "0", "8889" ) );
   socket.set_timestamps();
 
   /* get connection_id */
@@ -105,7 +128,7 @@ int main( int argc, char *argv[] )
   unordered_map<uint32_t, unordered_map<uint16_t, SeqNum>> pkt_nums; // TODO: in packet or map?
   unordered_map<SeqNum, system_clock::time_point> pkt_sent_time;
   CongCtrl cc; 
-
+  
   poller.add_action( Poller::Action( encode_pipe.second, Direction::In,
     [&]() -> Result {
       encode_pipe.second.read();
@@ -179,6 +202,9 @@ int main( int argc, char *argv[] )
 
   // only send new frames after min_rtt
   poller.add_action( Poller::Action( encode_pipe.first, Direction::Out, [&]() {
+      // update history and state of cong_ctrl 
+
+
       encode_pipe.first.write( "1" );
       return ResultType::Continue;
     }, [&]() { 

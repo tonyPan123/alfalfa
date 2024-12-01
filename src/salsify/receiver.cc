@@ -84,7 +84,7 @@ int main()
 
   /* construct Socket for incoming  datagrams */
   UDPSocket socket;
-  socket.bind( Address( "0", "8888" ) );
+  socket.bind( Address( "0", "8889" ) );
   socket.set_timestamps();
 
   /* frame no => FragmentedFrame; used when receiving packets out of order */
