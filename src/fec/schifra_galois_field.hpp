@@ -221,7 +221,7 @@ namespace schifra
          char*          buffer_;
       };
 
-      field::field(const int  pwr, const std::size_t primpoly_deg, const unsigned int* primitive_poly)
+      inline field::field(const int  pwr, const std::size_t primpoly_deg, const unsigned int* primitive_poly)
       : power_(pwr),
         prim_poly_deg_(primpoly_deg),
         field_size_((1 << power_) - 1)
@@ -280,7 +280,7 @@ namespace schifra
          generate_field(primitive_poly);
       }
 
-      field::~field()
+      inline field::~field()
       {
          if (0 !=  alpha_to_) { delete [] alpha_to_;  alpha_to_  = 0; }
          if (0 !=  index_of_) { delete [] index_of_;  index_of_  = 0; }
@@ -416,7 +416,7 @@ namespace schifra
          return alpha_to_[normalize(field_size_ - index_of_[val])];
       }
 
-      std::size_t field::create_array(char buffer[],
+      inline std::size_t field::create_array(char buffer[],
                                       const std::size_t& length,
                                       const std::size_t offset,
                                       field_symbol** array)
@@ -426,7 +426,7 @@ namespace schifra
          return row_size + offset;
       }
 
-      std::size_t field::create_2d_array(char buffer[],
+      inline std::size_t field::create_2d_array(char buffer[],
                                          std::size_t row_cnt, std::size_t col_cnt,
                                          const std::size_t offset,
                                          field_symbol*** array)

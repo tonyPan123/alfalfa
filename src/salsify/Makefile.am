@@ -21,7 +21,7 @@ salsify_receiver_LDFLAGS = -pthread
 
 fake_webcam_SOURCES = fake-webcam.cc 
 fake_webcam_CPPFLAGS = $(AM_CPPFLAGS) $(GLU_CFLAGS) $(GLEW_CFLAGS) $(GLFW3_CFLAGS)
-fake_webcam_LDADD = ../rust-deps/libnetwork_model_lib.a ../rust-deps/libmy_rust_lib.a ../cong_ctrl/libalfalfacong.a ../net/libnet.a ../encoder/libalfalfaencoder.a ../display/libalfalfadisplay.a $(BASE_LDADD) $(GLU_LIBS) $(GLEW_LIBS) $(GLFW3_LIBS) -ldl
+fake_webcam_LDADD = ../fec/libfec.a ../rust-deps/libnetwork_model_lib.a ../rust-deps/libmy_rust_lib.a ../cong_ctrl/libalfalfacong.a ../net/libnet.a ../encoder/libalfalfaencoder.a ../display/libalfalfadisplay.a $(BASE_LDADD) $(GLU_LIBS) $(GLEW_LIBS) $(GLFW3_LIBS) -ldl
 fake_webcam_LDFLAGS = -pthread  
 
 real_webcam_SOURCES = real-webcam.cc
@@ -46,5 +46,5 @@ ivfcompare_LDFLAGS =
 
 receiver_SOURCES = receiver.cc
 receiver_CPPFLAGS = $(AM_CPPFLAGS) $(GLU_CFLAGS) $(GLEW_CFLAGS) $(GLFW3_CFLAGS)
-receiver_LDADD = ../display/libalfalfadisplay.a ../net/libnet.a $(BASE_LDADD) $(GLU_LIBS) $(GLEW_LIBS) $(GLFW3_LIBS)
+receiver_LDADD = ../fec/libfec.a ../display/libalfalfadisplay.a ../net/libnet.a $(BASE_LDADD) $(GLU_LIBS) $(GLEW_LIBS) $(GLFW3_LIBS)
 receiver_LDFLAGS = -pthread

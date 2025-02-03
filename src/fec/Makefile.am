@@ -7,4 +7,4 @@ SUFFIXES = .asm
 .asm.o:
 	$(AS) $(ASFLAGS) -I$(srcdir)/../asm/ $<
 
-libfec_a_SOURCES =
+libfec_a_SOURCES = reed_solomon.cc
