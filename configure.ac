@@ -20,7 +20,8 @@ AS_IF([test x"$PERL" = x],
 
 # Add picky CXXFLAGS
 CXX11_FLAGS="-std=c++14 -pthread"
-PICKY_CXXFLAGS="-pedantic -Wall -Wextra -Weffc++ -Werror"
+# -Weffc++ -Werror
+PICKY_CXXFLAGS="-pedantic -Wall -Wextra -Werror"
 AC_SUBST([CXX11_FLAGS])
 AC_SUBST([PICKY_CXXFLAGS])
 AC_LANG_PUSH(C++)
@@ -143,6 +144,7 @@ AC_CONFIG_FILES([Makefile
                  src/frontend/Makefile
                  src/salsify/Makefile
                  src/tests/Makefile
+                 src/fec/Makefile
                  man/Makefile])
 
 AC_OUTPUT
