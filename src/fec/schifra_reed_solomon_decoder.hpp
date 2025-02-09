@@ -36,25 +36,28 @@ namespace schifra
    namespace reed_solomon
    {
 
-      template <std::size_t code_length, std::size_t fec_length, std::size_t data_length = code_length - fec_length>
+      template <std::size_t code_length>
       class decoder
       {
       public:
 
-         typedef traits::reed_solomon_triat<code_length,fec_length,data_length> trait;
-         typedef block<code_length,fec_length> block_type;
+         //typedef traits::reed_solomon_triat<code_length,fec_length,data_length> trait;
+         typedef block<code_length> block_type;
 
-         decoder(const galois::field& field, const unsigned int& gen_initial_index = 0)
+         decoder(const galois::field& field, const std::size_t data_len, const std::size_t fec_len, const unsigned int& gen_initial_index = 0)
          : decoder_valid_(field.size() == code_length),
            field_(field),
            X_(galois::generate_X(field_)),
-           gen_initial_index_(gen_initial_index)
+           gen_initial_index_(gen_initial_index),
+           data_length(data_len),
+           fec_length(fec_len)
          {
             if (decoder_valid_)
             {
                //Note: code_length and field size can be used interchangeably
                create_lookup_tables();
             }
+            assert(code_length == data_length + fec_length);
          };
 
          const galois::field& field() const
@@ -391,93 +394,9 @@ namespace schifra
          std::vector<galois::field_polynomial> gamma_table_;
          const galois::field_polynomial        X_;
          const unsigned int                    gen_initial_index_;
+         std::size_t data_length;
+         std::size_t fec_length;
       };
-
-      template <std::size_t code_length,
-                std::size_t fec_length,
-                std::size_t data_length    = code_length - fec_length,
-                std::size_t natural_length = 255,  // Needs to be in-sync with field size
-                std::size_t padding_length = natural_length - data_length - fec_length>
-      class shortened_decoder
-      {
-      public:
-
-         typedef traits::reed_solomon_triat<code_length,fec_length,data_length> trait;
-         typedef block<code_length,fec_length> block_type;
-
-         shortened_decoder(const galois::field& field, const unsigned int gen_initial_index = 0)
-         : decoder_(field, gen_initial_index)
-         {}
-
-         inline bool decode(block_type& rsblock, const erasure_locations_t& erasure_list) const
-         {
-            typename natural_decoder_type::block_type block;
-
-            std::fill_n(&block[0], padding_length, typename block_type::symbol_type(0));
-
-            for (std::size_t i = 0; i < code_length; ++i)
-            {
-               block.data[padding_length + i] = rsblock.data[i];
-            }
-
-            erasure_locations_t shifted_position_erasure_list(erasure_list.size(),0);
-
-            for (std::size_t i = 0; i < erasure_list.size(); ++i)
-            {
-               shifted_position_erasure_list[i] = erasure_list[i] + padding_length;
-            }
-
-            if (decoder_.decode(block, shifted_position_erasure_list))
-            {
-               for (std::size_t i = 0; i < code_length; ++i)
-               {
-                  rsblock.data[i] = block.data[padding_length + i];
-               }
-
-               rsblock.copy_state(block);
-               return true;
-            }
-            else
-            {
-               rsblock.copy_state(block);
-               return false;
-            }
-         }
-
-         inline bool decode(block_type& rsblock) const
-         {
-            typename natural_decoder_type::block_type block;
-
-            std::fill_n(&block[0], padding_length, typename block_type::symbol_type(0));
-
-            for (std::size_t i = 0; i < code_length; ++i)
-            {
-               block.data[padding_length + i] = rsblock.data[i];
-            }
-
-            if (decoder_.decode(block))
-            {
-               for (std::size_t i = 0; i < code_length; ++i)
-               {
-                  rsblock.data[i] = block.data[padding_length + i];
-               }
-
-               rsblock.copy_state(block);
-               return true;
-            }
-            else
-            {
-               rsblock.copy_state(block);
-               return false;
-            }
-         }
-
-      private:
-
-         typedef decoder<natural_length,fec_length> natural_decoder_type;
-         const natural_decoder_type decoder_;
-      };
-
    } // namespace reed_solomon
 
 } // namespace schifra
