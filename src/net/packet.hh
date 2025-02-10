@@ -50,6 +50,7 @@ private:
   uint16_t fragment_no_;
   uint16_t fragments_in_this_frame_;
   uint32_t time_since_last_; /* microseconds */
+  uint16_t payload_size_;
 
   std::string payload_;
 
@@ -69,6 +70,7 @@ public:
   uint16_t fragment_no() const { return fragment_no_; }
   uint16_t fragments_in_this_frame() const { return fragments_in_this_frame_; }
   uint32_t time_since_last() const { return time_since_last_; }
+  uint16_t payload_size() const { return payload_size_; }
   const std::string & payload() const { return payload_; }
 
   /* construct outgoing Packet */

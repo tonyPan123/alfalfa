@@ -47,8 +47,6 @@ class FECPacket {
         static std::string put_header_field( const uint32_t n );
 };
 
-
-
 class FECFrame
 {
 
@@ -61,7 +59,24 @@ class FECFrame
 
 };
 
+class AckFECPacket
+{
+public:
+  uint16_t connection_id_;
+  uint32_t frame_no_;
+  uint16_t pkt_no_;
 
+  std::string frame_ack_;
+
+  AckFECPacket( const uint16_t connection_id, const uint32_t frame_no,
+             const uint16_t pkt_no, const std::string frame_ack);
+
+  AckFECPacket( const Chunk & str );
+
+  std::string to_string();
+
+  void sendto( UDPSocket & socket, const Address & addr );
+};
 
 
 

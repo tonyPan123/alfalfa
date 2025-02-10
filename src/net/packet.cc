@@ -71,6 +71,7 @@ Packet::Packet( const vector<uint8_t> & whole_frame,
     fragment_no_( fragment_no ),
     fragments_in_this_frame_( 0 ), /* temp value */
     time_since_last_( time_since_last ),
+    payload_size_(),
     payload_()
 {
   assert( not whole_frame.empty() );
@@ -82,6 +83,8 @@ Packet::Packet( const vector<uint8_t> & whole_frame,
   assert( first_byte + length <= whole_frame.size() );
 
   payload_ = string( reinterpret_cast<const char*>( &whole_frame.at( first_byte ) ), length );
+
+  payload_size_ = (uint16_t)payload_.length();
 
   next_fragment_start = first_byte + length;
 }
@@ -96,7 +99,8 @@ Packet::Packet( const Chunk & str )
     fragment_no_( str( 14, 2 ).le16() ),
     fragments_in_this_frame_( str( 16, 2 ).le16() ),
     time_since_last_( str( 18, 4 ).le32() ),
-    payload_( str( 22 ).to_string() )
+    payload_size_( str( 22, 2 ).le16() ),
+    payload_( str( 24 ).to_string() )
 {
   if ( fragment_no_ >= fragments_in_this_frame_ ) {
     throw runtime_error( "invalid packet: fragment_no_ >= fragments_in_this_frame" );
@@ -117,6 +121,7 @@ Packet::Packet()
     fragment_no_(),
     fragments_in_this_frame_(),
     time_since_last_(),
+    payload_size_(),
     payload_()
 {}
 
@@ -132,6 +137,7 @@ string Packet::to_string() const
        + put_header_field( fragment_no_ )
        + put_header_field( fragments_in_this_frame_ )
        + put_header_field( time_since_last_ )
+       + put_header_field( payload_size_)
        + payload_;
 }
 

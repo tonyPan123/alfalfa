@@ -32,9 +32,9 @@
 
    std::string FECPacket::put_header_field( const uint32_t n )
    {
-      const uint16_t network_order = htole16( n );
+      const uint32_t network_order = htole32( n );
       return std::string( reinterpret_cast<const char *>( &network_order ),
-                  sizeof( network_order ) );
+                     sizeof( network_order ) );
    }
 
 
@@ -68,6 +68,8 @@
          fec_payloads.push_back("");   
       }
       size_t fec_payload_len = fecpkts.at(0).payload_.length();
+      //std::cout << "FEC packet length is:" << fec_payload_len << std::endl;
+
       for (size_t j = 0; j < fec_payload_len; j++) {
          std::string message;
          for (uint16_t k = 0; k < total_num; k++) {
@@ -97,18 +99,18 @@
    std::string FECFrame::make_fec(std::string message, const uint16_t fec_length) {
 
       /* Finite Field Parameters */
-      const std::size_t field_descriptor                =   8;
-      const std::size_t generator_polynomial_index      = 120;
+      const std::size_t field_descriptor                =   6;
+      const std::size_t generator_polynomial_index      = 30;
       const std::size_t generator_polynomial_root_count =  fec_length;
 
       /* Reed Solomon Code Parameters */
-      const std::size_t code_length = 255;
+      const std::size_t code_length = 63;
       const std::size_t data_length = code_length - fec_length;
 
       /* Instantiate Finite Field and Generator Polynomials */
       const schifra::galois::field field(field_descriptor,
-                                      schifra::galois::primitive_polynomial_size06,
-                                      schifra::galois::primitive_polynomial06);
+                                      schifra::galois::primitive_polynomial_size03,
+                                      schifra::galois::primitive_polynomial03);
 
       schifra::galois::field_polynomial generator_polynomial(field);
 
@@ -132,7 +134,7 @@
       /* Transform message into Reed-Solomon encoded codeword */
       message.resize(code_length, 0x00);
 
-      std::cout << "Original Message:  [" << message << "]" << std::endl;
+      //std::cout << "Original Message:  [" << message << "]" << std::endl;
       
       /* Instantiate RS Block For Codec */
       schifra::reed_solomon::block<code_length> block{data_length, fec_length};
@@ -145,7 +147,7 @@
          return "";
       }
 
-      std::cout << "Corrupted Codeword: [" << block << "]" << std::endl;
+      //std::cout << "Encoded Codeword: [" << block << "]" << std::endl;
 
       /*
       typedef schifra::reed_solomon::decoder<code_length> decoder_t;
@@ -180,9 +182,36 @@
 
    int ReedSolomon::reed_test() {
       FECFrame ff;
-      std::string test = ff.make_fec("Dingdongji", 3);
+      std::string test = ff.make_fec("Dingdongji", 20);
 
       schifra::reed_solomon::erasure_locations_t erasure_location_list;
       std::cout << "Got: [" << test << "]" << " " << test.length() << std::endl;
       return 0;
+   }
+
+
+   AckFECPacket::AckFECPacket( const uint16_t connection_id, const uint32_t frame_no, const uint16_t pkt_no, const std::string frame_ack)
+      : connection_id_( connection_id ), frame_no_( frame_no ),
+         pkt_no_( pkt_no ), frame_ack_( frame_ack )
+      {}
+
+   AckFECPacket::AckFECPacket( const Chunk & str )
+      : connection_id_( str( 0, 2 ).le16() ),
+        frame_no_( str( 2, 4 ).le32() ),
+        pkt_no_( str( 6, 2 ).le16() ),
+        frame_ack_( str( 8 ).to_string() )
+      {}
+
+   std::string AckFECPacket::to_string()
+   {
+      return FECPacket::put_header_field( connection_id_ )
+                + FECPacket::put_header_field( frame_no_ )
+                + FECPacket::put_header_field( pkt_no_ )
+                + frame_ack_;
+   }  
+
+
+   void AckFECPacket::sendto( UDPSocket & socket, const Address & addr )
+   {
+      socket.sendto( addr, to_string() );
    }
