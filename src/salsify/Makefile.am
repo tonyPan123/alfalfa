@@ -1,7 +1,7 @@
-AM_CPPFLAGS = -I$(srcdir)/../fec -I$(srcdir)/../rust-deps  -I$(srcdir)/../cong_ctrl -I$(srcdir)/../util -I$(srcdir)/../decoder -I$(srcdir)/../display -I$(srcdir)/../input -I$(srcdir)/../encoder -I$(srcdir)/../net $(X264_CFLAGS) $(CXX11_FLAGS)
+AM_CPPFLAGS = -I$(srcdir)/../fast-fec -I$(srcdir)/../rust-deps  -I$(srcdir)/../cong_ctrl -I$(srcdir)/../util -I$(srcdir)/../decoder -I$(srcdir)/../display -I$(srcdir)/../input -I$(srcdir)/../encoder -I$(srcdir)/../net $(X264_CFLAGS) $(CXX11_FLAGS)
 AM_CXXFLAGS = $(PICKY_CXXFLAGS) $(NODEBUG_CXXFLAGS)
 AM_LDFLAGS = $(STATIC_BUILD_FLAG)
-BASE_LDADD = ../rust-deps/libnetwork_model_lib.a ../rust-deps/libmy_rust_lib.a ../cong_ctrl/libalfalfacong.a ../input/libalfalfainput.a ../decoder/libalfalfadecoder.a ../util/libalfalfautil.a $(X264_LIBS) $(JPEG_LIBS)
+BASE_LDADD = ../rust-deps/libnetwork_model_lib.a ../cong_ctrl/libalfalfacong.a ../input/libalfalfainput.a ../decoder/libalfalfadecoder.a ../util/libalfalfautil.a /usr/lib/x86_64-linux-gnu/libx264.a $(X264_LIBS) $(JPEG_LIBS)
 
 VP8PLAY_BUILD :=
 if BUILDVP8PLAY
@@ -19,9 +19,19 @@ salsify_receiver_CPPFLAGS = $(AM_CPPFLAGS) $(GLU_CFLAGS) $(GLEW_CFLAGS) $(GLFW3_
 salsify_receiver_LDADD = ../display/libalfalfadisplay.a ../net/libnet.a $(BASE_LDADD) $(GLU_LIBS) $(GLEW_LIBS) $(GLFW3_LIBS)
 salsify_receiver_LDFLAGS = -pthread
 
-fake_webcam_SOURCES = fake-webcam.cc 
+fake_webcam_SOURCES = fake-webcam.cc ../fast-fec/reed_solomon.hpp ../fast-fec/reed_solomon.cc \
+  ../fast-fec/galois.h \
+  ../fast-fec/cauchy.h \
+  ../fast-fec/jerasure.h \
+  ../fast-fec/reed_sol.h \
+  ../fast-fec/liberation.h \
+  ../fast-fec/galois.c \
+  ../fast-fec/cauchy.c \
+  ../fast-fec/jerasure.c \
+  ../fast-fec/reed_sol.c \
+  ../fast-fec/liberation.c 
 fake_webcam_CPPFLAGS = $(AM_CPPFLAGS) $(GLU_CFLAGS) $(GLEW_CFLAGS) $(GLFW3_CFLAGS)
-fake_webcam_LDADD = ../fec/libfec.a ../rust-deps/libnetwork_model_lib.a ../rust-deps/libmy_rust_lib.a ../cong_ctrl/libalfalfacong.a ../net/libnet.a ../encoder/libalfalfaencoder.a ../display/libalfalfadisplay.a $(BASE_LDADD) $(GLU_LIBS) $(GLEW_LIBS) $(GLFW3_LIBS) -ldl
+fake_webcam_LDADD = ../rust-deps/libnetwork_model_lib.a ../cong_ctrl/libalfalfacong.a ../net/libnet.a ../encoder/libalfalfaencoder.a ../display/libalfalfadisplay.a $(BASE_LDADD) $(GLU_LIBS) $(GLEW_LIBS) $(GLFW3_LIBS) -ldl
 fake_webcam_LDFLAGS = -pthread  
 
 real_webcam_SOURCES = real-webcam.cc
@@ -44,7 +54,17 @@ ivfcompare_CPPFLAGS = $(AM_CPPFLAGS) $(GLU_CFLAGS) $(GLEW_CFLAGS) $(GLFW3_CFLAGS
 ivfcompare_LDADD = ../util/libalfalfautil.a $(BASE_LDADD) $(GLU_LIBS) $(GLEW_LIBS) $(GLFW3_LIBS)
 ivfcompare_LDFLAGS =
 
-receiver_SOURCES = receiver.cc
+receiver_SOURCES = receiver.cc ../fast-fec/reed_solomon.hpp ../fast-fec/reed_solomon.cc \
+  ../fast-fec/galois.h \
+  ../fast-fec/cauchy.h \
+  ../fast-fec/jerasure.h \
+  ../fast-fec/reed_sol.h \
+  ../fast-fec/liberation.h \
+  ../fast-fec/galois.c \
+  ../fast-fec/cauchy.c \
+  ../fast-fec/jerasure.c \
+  ../fast-fec/reed_sol.c \
+  ../fast-fec/liberation.c 
 receiver_CPPFLAGS = $(AM_CPPFLAGS) $(GLU_CFLAGS) $(GLEW_CFLAGS) $(GLFW3_CFLAGS)
-receiver_LDADD = ../fec/libfec.a ../display/libalfalfadisplay.a ../net/libnet.a $(BASE_LDADD) $(GLU_LIBS) $(GLEW_LIBS) $(GLFW3_LIBS)
+receiver_LDADD = ../display/libalfalfadisplay.a ../net/libnet.a $(BASE_LDADD) $(GLU_LIBS) $(GLEW_LIBS) $(GLFW3_LIBS)
 receiver_LDFLAGS = -pthread

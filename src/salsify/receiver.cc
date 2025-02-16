@@ -78,7 +78,11 @@ condition_variable cv;
 int main()
 {
   ReedSolomon rs;
+  auto checkpt1 = system_clock::now();
   rs.reed_test();
+  auto checkpt2 = system_clock::now();
+  std::chrono::duration<double, std::ratio<1,1000>> diffec = (checkpt2 - checkpt1); 
+  cout << "FEC Encoding time is " << diffec.count()  << endl;
   /* check the command-line arguments */
 
 

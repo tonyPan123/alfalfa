@@ -211,7 +211,7 @@ int main( int argc, char *argv[] )
           //vector<uint8_t> output = base_encoder.encode_with_quantizer( raster.get(), 3);
           cout << "The bb is " << cc.beliefs.min_c <<":" << cc.beliefs.min_c * Packet::MAXIMUM_PAYLOAD << endl;
           auto checkpt1 = system_clock::now();
-          vector<uint8_t> output = base_encoder.encode_with_target_size( raster.get(), cc.beliefs.min_c  * Packet::MAXIMUM_PAYLOAD);
+          vector<uint8_t> output = base_encoder.encode_with_target_size( raster.get(), 3 * cc.beliefs.min_c  * Packet::MAXIMUM_PAYLOAD);
           auto checkpt2 = system_clock::now();
           //vector<uint8_t> mini_output = minimum_encoder.encode_with_quantizer( raster.get(), 3);
           //cout << "Maximize: " << output.size() << endl;
@@ -234,7 +234,7 @@ int main( int argc, char *argv[] )
           //cout << "Go go!" << endl;
           cout << "FEC size is: " << (uint16_t)(cc.get_cca_action() - ff.packets().size()) << endl;
           //cout << "Go go!" << endl;
-          FECFrame fecframe {ff.packets(), ff.connection_id(), ff.frame_no(), (uint16_t)(cc.get_cca_action() - ff.packets().size())};
+          FECFrame fecframe {ff.packets(), ff.connection_id(), ff.frame_no(), (uint16_t)10};
           auto checkpt3 = system_clock::now();
           std::chrono::duration<double, std::ratio<1,1000>> diff = (checkpt3 - checkpt2);
           cout << "FEC time is: " << diff.count() << endl;
@@ -294,8 +294,8 @@ int main( int argc, char *argv[] )
   poller.add_action( Poller::Action( update_pipe.second, Direction::In, [&]() {
       update_pipe.second.read();
       // update history and state of cong_ctrl 
-      cc.updateHistory();
-      cc.updateBeliefBound();
+      //cc.updateHistory();
+      //cc.updateBeliefBound();
       encode_pipe.first.write( "1" );
       return ResultType::Continue;
     }, [&]() { 
