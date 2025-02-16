@@ -108,6 +108,9 @@ if test "$buildvp8" = true; then
     PKG_CHECK_MODULES([GLEW], [glew])
 fi
 
+# Checks for library functions.
+AC_CHECK_LIB([gf_complete], [gf_init_easy])
+
 # Checks for header files.
 AC_PATH_X
 AC_CHECK_HEADERS([fcntl.h unistd.h], [], [AC_MSG_ERROR([Missing required header file])])
