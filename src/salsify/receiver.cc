@@ -206,7 +206,7 @@ int main()
           {
             
             //cout << "Ack!" << fecpacket.frame_no_ <<" "<< fecpacket.pkt_no_ << endl;
-            std::this_thread::sleep_for(std::chrono::milliseconds(70));
+            //std::this_thread::sleep_for(std::chrono::milliseconds(70));
             AckFECPacket ack = AckFECPacket (connection_id, fecpacket.frame_no_, fecpacket.pkt_no_, ack_back.to_string());
             ack.sendto( socket, new_fragment.source_address );
           }
@@ -218,7 +218,7 @@ int main()
           {
             
             //cout << "Ack!" << fecpacket.frame_no_ <<" "<< fecpacket.pkt_no_ << endl;
-            std::this_thread::sleep_for(std::chrono::milliseconds(70));
+            //std::this_thread::sleep_for(std::chrono::milliseconds(70));
             AckFECPacket ack = AckFECPacket (connection_id, fecpacket.frame_no_, fecpacket.pkt_no_, "");
             ack.sendto( socket, new_fragment.source_address );   
           }

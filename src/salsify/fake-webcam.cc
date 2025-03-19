@@ -30,6 +30,7 @@
 #include <chrono>
 #include <thread>
 #include <unordered_map>
+#include <mutex>
 
 #include "yuv4mpeg.hh"
 #include "paranoid.hh"
@@ -42,6 +43,9 @@
 #include "packet.hh"
 #include "pacer.hh"
 #include "cong_ctrl.hh"
+#include "slow_conv.hh"
+#include "slow_conv_manual.hh"
+#include "adaptive_stream.hh"
 
 #include "reed_solomon.hpp"
 
@@ -73,6 +77,14 @@ extern "C" {
 void usage( const char *argv0 )
 {
   cerr << "Usage: " << argv0 << " INPUT FPS HOST PORT CONNECTION_ID" << endl;
+}
+
+double current_timestamp( chrono::high_resolution_clock::time_point &start_time_point ){
+  using namespace chrono;
+  high_resolution_clock::time_point cur_time_point = high_resolution_clock::now();
+  // convert to milliseconds, because that is the scale on which the
+  // rats have been trained
+  return duration_cast<duration<double>>(cur_time_point - start_time_point).count()*1000;
 }
 
 
@@ -111,10 +123,10 @@ int main( int argc, char *argv[] )
   //auto next_frame_is_due = chrono::system_clock::now();
 
   // Test encoder
-  Encoder base_encoder { input.display_width(), input.display_height(),
+  Encoder first_encoder { input.display_width(), input.display_height(),
                          false /* two-pass */, REALTIME_QUALITY };
 
-  Encoder minimum_encoder { input.display_width(), input.display_height(),
+  Encoder second_encoder { input.display_width(), input.display_height(),
                          false /* two-pass */, REALTIME_QUALITY };
 
   auto encode_pipe = UnixDomainSocket::make_pair();
@@ -130,17 +142,24 @@ int main( int argc, char *argv[] )
 
   Poller poller;
   Pacer pacer;
+  std::mutex first_encoder_lock;
+  std::mutex second_encoder_lock;
 
   /* counter variable */
   uint32_t frame_no = 0;
+  [[maybe_unused]] uint32_t real_frame_no = 0;
+
   SeqNum pkt_no = 0;
   //auto start = chrono::system_clock::now();
   system_clock::time_point last_sent = system_clock::now();
+  chrono::high_resolution_clock::time_point start_time_point = chrono::high_resolution_clock::now();
   unordered_map<uint32_t, unordered_map<uint16_t, SeqNum>> pkt_nums; // TODO: in packet or map?
   unordered_map<SeqNum, system_clock::time_point> pkt_sent_time;
   CongCtrl cc; 
+  SlowConvManual congctrl("./log", 1);
+  ABR abr {input};
 
-  auto start = chrono::system_clock::now();
+  [[maybe_unused]] auto start = chrono::system_clock::now();
 
   // Skip the first small header file
   const Optional<RasterHandle> raster = input.get_next_frame();
@@ -172,88 +191,102 @@ int main( int argc, char *argv[] )
     [&]() -> Result {
       encode_pipe.second.read();
 
-      /* wait until next frame is due */
-      //this_thread::sleep_until( next_frame_is_due );
-      //next_frame_is_due += interval_between_frames;
-      // TODO: minRtt passed, update belief bound!
-
-      //system_clock::time_point before_encoding = system_clock::now();
-
-      //const BaseRaster& rh = raster.get();
-      //display.draw(rh);
-      /*
-      if (frame_no == 51) {
-        for (int i = 8000; i <= 200000; i = i + 1000) {
-          auto checkptx = system_clock::now();
-          Encoder test_encoder { input.display_width(), input.display_height(),
-                         false , REALTIME_QUALITY };
-          vector<uint8_t> zz = test_encoder.encode_with_target_size( raster.get(), i);
-          auto checkptz = system_clock::now();
-          std::chrono::duration<double, std::ratio<1,1000>> diff = (checkptz - checkptx);
-          cout << i << " " << zz.size() << " " << diff.count() << endl;
-        }
-      } */
+      auto fetch_start = system_clock::now();
+      Optional<RasterHandle> raster = input.get_next_frame();
+      if ( not raster.initialized() ) {
+        return { ResultType::Exit, EXIT_FAILURE };
+      }
       ++frame_no;
-      cout << "Add new thread!" << endl;
+      // Simulate 30 fps
+      std::chrono::duration<double, std::ratio<1,1000>> fetch_duration = (system_clock::now() - fetch_start);
+      if ((int)fetch_duration.count() < 33) {
+        this_thread::sleep_for(chrono::milliseconds(33 - (int)fetch_duration.count()));
+      }
+
+      abr.add_fetch_frame(raster.get());
 
       // this thread will spawn all the encoding jobs and will wait on the results
+      /** 
       thread(
-        [&update_pipe, &cc, &base_encoder, &input, &frame_no, &connection_id, &pacer, &start]()
+        [raster, &cc, &first_encoder, &second_encoder, connection_id, &frame_no, &real_frame_no, &first_encoder_lock, &second_encoder_lock, &start]()
         {
-          const Optional<RasterHandle> raster = input.get_next_frame();
-          if ( not raster.initialized() ) {
-            std::chrono::duration<double> diff = (system_clock::now() - start);
-            cout << "Spent: " << diff.count() << endl;
-            //return { ResultType::Exit, EXIT_FAILURE };
+          auto encode_start = system_clock::now();
+
+          uint32_t source_minihash;
+          vector<uint8_t> output;
+          uint32_t target_minihash; 
+          Encoder encoder_copy_first = first_encoder;
+          Encoder encoder_copy_second = second_encoder;
+          size_t target_size = 1 * cc.beliefs.min_c;
+          uint32_t frame_no_to_use = 0;
+          if (frame_no % 2  == 1) {
+            first_encoder_lock.lock();
+            source_minihash = first_encoder.minihash();
+            //output = first_encoder.encode_with_quantizer( raster.get(), 120);
+            output = first_encoder.encode_with_target_size( raster.get(), target_size * Packet::MAXIMUM_PAYLOAD);
+            target_minihash = first_encoder.minihash();
+            // Skip the frame if too big
+            if (output.size() > 3 * target_size * Packet::MAXIMUM_PAYLOAD) {
+              first_encoder = move(encoder_copy_first);
+              cout << "Oversize" << endl;
+              first_encoder_lock.unlock();
+              return;
+            }
+            real_frame_no++;
+            frame_no_to_use = real_frame_no;
+            first_encoder_lock.unlock();
+          } else {
+            second_encoder_lock.lock();
+            source_minihash = second_encoder.minihash();
+            //output = second_encoder.encode_with_quantizer( raster.get(), 120);
+            output = second_encoder.encode_with_target_size( raster.get(), target_size * Packet::MAXIMUM_PAYLOAD);
+            target_minihash = second_encoder.minihash();
+            // Skip the frame if too big
+            if (output.size() > 3 * target_size * Packet::MAXIMUM_PAYLOAD) {
+              second_encoder = move(encoder_copy_second);
+              cout << "Oversize" << endl;
+              second_encoder_lock.unlock();
+              return;
+            }
+            real_frame_no++;
+            frame_no_to_use = real_frame_no;
+            second_encoder_lock.unlock();
           }
 
-          auto source_minihash = base_encoder.minihash();
-          //vector<uint8_t> output = base_encoder.encode_with_quantizer( raster.get(), 3);
-          cout << "The bb is " << cc.beliefs.min_c <<":" << cc.beliefs.min_c * Packet::MAXIMUM_PAYLOAD << endl;
-          auto checkpt1 = system_clock::now();
-          vector<uint8_t> output = base_encoder.encode_with_target_size( raster.get(), 3 * cc.beliefs.min_c  * Packet::MAXIMUM_PAYLOAD);
-          auto checkpt2 = system_clock::now();
-          //vector<uint8_t> mini_output = minimum_encoder.encode_with_quantizer( raster.get(), 3);
-          //cout << "Maximize: " << output.size() << endl;
-          //auto checkpt3 = system_clock::now();
-          std::chrono::duration<double, std::ratio<1,1000>> diffec = (checkpt2 - checkpt1); // in millis
-          //std::chrono::duration<double, std::ratio<1,1000>> diff2 = (checkpt3 - checkpt2); // in millis
-          cout << "Encoding time is " << diffec.count()  << endl;
-          // Add reed-solomon code here 
-    
-          auto target_minihash = base_encoder.minihash();
-          //cout << "Encoding out: " << output.size() << " while target is "  
-            //<< 60 * Packet::MAXIMUM_PAYLOAD << endl;
-          cout << "Encoding out: " << output.size() << endl;
-    
           FragmentedFrame ff { connection_id, source_minihash, target_minihash,
-                               frame_no,
+                               frame_no_to_use,
                                0,
                                output};
+
+          cout << "Output size is: " << ff.packets().size() << endl;
           // FEC
-          //cout << "Go go!" << endl;
-          cout << "FEC size is: " << (uint16_t)(cc.get_cca_action() - ff.packets().size()) << endl;
-          //cout << "Go go!" << endl;
-          FECFrame fecframe {ff.packets(), ff.connection_id(), ff.frame_no(), (uint16_t)10};
-          auto checkpt3 = system_clock::now();
-          std::chrono::duration<double, std::ratio<1,1000>> diff = (checkpt3 - checkpt2);
-          cout << "FEC time is: " << diff.count() << endl;
-          // Add packets into pacer
-          for ( const auto & packet : fecframe.fecpkts ) {
-            pacer.push( packet.to_string(), 0);
+          //FECFrame fecframe {ff.packets(), ff.connection_id(), ff.frame_no(), (uint16_t)(256 - ff.packets().size())};
+
+          auto encode_end = system_clock::now();
+          std::chrono::duration<double, std::ratio<1,1000>> encode_duration = (encode_end - encode_start);
+          cout << "Encoding of " <<  ff.frame_no() << " takes: " << encode_duration.count() << endl;
+
+          //if (frame_no == 80) {
+          //  auto end = system_clock::now();
+          //  std::chrono::duration<double, std::ratio<1,1000>> full_encode_duration = (end - start);
+          //  cout << "Encoding totally takes: " << full_encode_duration.count() << endl;
+          //}
+
+          // Add packets into pacer??
+          //for ( const auto & packet : fecframe.fecpkts ) {
+          //  pacer.push( packet.to_string(), 0);
             //pkt_nums[packet.frame_no_][packet.pkt_no_] = pkt_no;
             //pkt_sent_time[pkt_no] = system_clock::now();
             //socket.send( packet.to_string() );
             //cout << "Send:" << packet.pkt_no_ << endl;
             //cc.onSent();
             //++pkt_no;
-          } 
-          update_pipe.first.write( "1" );
+          //} 
         }
       ).detach();
+      **/
 
-
-
+      encode_pipe.first.write( "1" );
 
       return ResultType::Continue;
     } ) 
@@ -265,23 +298,27 @@ int main( int argc, char *argv[] )
 
   poller.add_action( Poller::Action( socket, Direction::Out, [&]() {
       assert( pacer.ms_until_due() == 0 );
-
+      double cur_time;
       while ( pacer.ms_until_due() == 0 ) {
         assert( not pacer.empty() );
-        //cout << "sent!" << endl;
+
+        cur_time = current_timestamp( start_time_point );
+        congctrl.set_timestamp(cur_time);
+
         string to_sent = pacer.front();
         FECPacket packet = FECPacket{to_sent};
-
         socket.send( to_sent );
         pacer.pop();
         pkt_nums[packet.frame_no_][packet.pkt_no_] = pkt_no;
         pkt_sent_time[pkt_no] = system_clock::now();
+
+        congctrl.onPktSent( pkt_no );
         ++pkt_no;
-        // Utilize cwnd to bound???
-        cc.onSent();
       }
-      last_sent = system_clock::now();
-      //last_sent_pkt = system_clock::now();
+
+      if (pacer.empty()) {
+        update_pipe.first.write( "1" );
+      }
 
       return ResultType::Continue;
   }, [&]() { 
@@ -289,23 +326,27 @@ int main( int argc, char *argv[] )
     //return (diff.count() >= rtprop) && pacer.ms_until_due() == 0; 
     return pacer.ms_until_due() == 0; } ) );
 
-  int grace_period = 15;
+  int grace_period = 1000;
   // only send new frames after min_rtt
   poller.add_action( Poller::Action( update_pipe.second, Direction::In, [&]() {
       update_pipe.second.read();
       // update history and state of cong_ctrl 
       //cc.updateHistory();
       //cc.updateBeliefBound();
-      encode_pipe.first.write( "1" );
+      abr.add_fec();
+      abr.encode_fetched_frames(17000);
+      last_sent = system_clock::now();
+      update_pipe.first.write( "1" );
       return ResultType::Continue;
     }, [&]() { 
       std::chrono::duration<double, std::ratio<1,1000>> diff = (system_clock::now() - last_sent); // in millis
-      return pacer.empty() && diff.count() >= (cc.get_action_intertime() + grace_period); 
+      return diff.count() >= (cc.get_action_intertime() + grace_period); 
   } ) );
 
 
   // Start!!!
   encode_pipe.first.write( "1" );
+  update_pipe.first.write( "1" );
 
   while ( true ) {
     const auto poll_result = poller.poll(grace_period);

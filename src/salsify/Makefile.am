@@ -1,4 +1,4 @@
-AM_CPPFLAGS = -I$(srcdir)/../fast-fec -I$(srcdir)/../rust-deps  -I$(srcdir)/../cong_ctrl -I$(srcdir)/../util -I$(srcdir)/../decoder -I$(srcdir)/../display -I$(srcdir)/../input -I$(srcdir)/../encoder -I$(srcdir)/../net $(X264_CFLAGS) $(CXX11_FLAGS)
+AM_CPPFLAGS = -I$(srcdir)/../fast-ctrl -I$(srcdir)/../fast-fec -I$(srcdir)/../rust-deps  -I$(srcdir)/../cong_ctrl -I$(srcdir)/../util -I$(srcdir)/../decoder -I$(srcdir)/../display -I$(srcdir)/../input -I$(srcdir)/../encoder -I$(srcdir)/../net $(X264_CFLAGS) $(CXX11_FLAGS)
 AM_CXXFLAGS = $(PICKY_CXXFLAGS) $(NODEBUG_CXXFLAGS)
 AM_LDFLAGS = $(STATIC_BUILD_FLAG)
 BASE_LDADD = ../rust-deps/libnetwork_model_lib.a ../cong_ctrl/libalfalfacong.a ../input/libalfalfainput.a ../decoder/libalfalfadecoder.a ../util/libalfalfautil.a /usr/lib/x86_64-linux-gnu/libx264.a $(X264_LIBS) $(JPEG_LIBS)
@@ -29,7 +29,12 @@ fake_webcam_SOURCES = fake-webcam.cc ../fast-fec/reed_solomon.hpp ../fast-fec/re
   ../fast-fec/cauchy.c \
   ../fast-fec/jerasure.c \
   ../fast-fec/reed_sol.c \
-  ../fast-fec/liberation.c 
+  ../fast-fec/liberation.c \
+  ../fast-ctrl/ccc.hh  \
+  ../fast-ctrl/slow_conv.cc  \
+  ../fast-ctrl/slow_conv.hh  \
+  ../fast-ctrl/slow_conv_manual.cc  \
+  ../fast-ctrl/slow_conv_manual.hh
 fake_webcam_CPPFLAGS = $(AM_CPPFLAGS) $(GLU_CFLAGS) $(GLEW_CFLAGS) $(GLFW3_CFLAGS)
 fake_webcam_LDADD = ../rust-deps/libnetwork_model_lib.a ../cong_ctrl/libalfalfacong.a ../net/libnet.a ../encoder/libalfalfaencoder.a ../display/libalfalfadisplay.a $(BASE_LDADD) $(GLU_LIBS) $(GLEW_LIBS) $(GLFW3_LIBS) -ldl
 fake_webcam_LDFLAGS = -pthread  
