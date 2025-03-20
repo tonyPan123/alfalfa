@@ -43,8 +43,6 @@ struct EncodeOutput
 EncodeOutput do_encode_job( EncodeJob && encode_job )
 {
     std::vector<uint8_t> output;
-    //uint32_t source_minihash = 1;
-    //Encoder encoder{ 1280, 720, false, REALTIME_QUALITY };
     uint32_t source_minihash = encode_job.encoder.minihash();
 
     output = encode_job.encoder.encode_with_target_size( encode_job.raster.get(),
@@ -126,8 +124,6 @@ class ABR {
                 encoder = move(good_outputs[ good_outputs.size() - 1 ].encoder);
             }
         }
-        
-
 };
 
 

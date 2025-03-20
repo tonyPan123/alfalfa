@@ -7,59 +7,29 @@ void CongCtrl::onSent() {
 
 // How to handle with pkts reordering?
 void CongCtrl::onACK(SeqNum ack, Time rtt) {
-    // Assume ack start from 0
+    // TODO: add case for handling focus == -1
+    
+    assert(focus <= (HISTORY_SIZE - 1));
+    assert(focus >= 0);
+    // Assume ack start from 1
     // Reordering regarded as lost
-    if (ack >= (cum_segs_delivered + cum_segs_lost)) {
-        // Deal with the new loss first!!!
-        cum_segs_lost += (ack - (cum_segs_delivered + cum_segs_lost));
-        while (cum_segs_loss_vector.back().creation_cum_lost_segs < cum_segs_lost) {
-            // Make sure the last entry is not complete before digesting the loss
-            if (cum_segs_loss_vector.back().complete) {
-                Loss loss = cum_segs_loss_vector.back();
-                loss.complete = false;
-                loss.ago -= 1;
-                assert(loss.ago >= 0);
-                cum_segs_loss_vector.push_back(loss);
-            }
-
-            int cur_ago = cum_segs_loss_vector.back().ago;
-            int index = HISTORY_SIZE - cur_ago;
-            if (index < HISTORY_SIZE) {
-                cum_segs_loss_vector.back().creation_cum_lost_segs = std::min (
-                    cum_segs_lost, 
-                    history.at(index).creation_cum_sent_segs - cum_segs_delivered
-                );
-                if (cum_segs_lost >= (history.at(index).creation_cum_sent_segs - cum_segs_delivered)) {
-                    cum_segs_loss_vector.back().complete = true;
-                }
-            } else {
-                cum_segs_loss_vector.back().creation_cum_lost_segs = std::min (
-                    cum_segs_lost, 
-                    cum_segs_sent - cum_segs_delivered
-                );
-                if (cum_segs_lost >= (cum_segs_sent - cum_segs_delivered)) {
-                    cum_segs_loss_vector.back().complete = true;
-                }
-            }
-        }
-        // Deal with the new delivered
+    if (ack > (cum_segs_delivered + cum_segs_lost)) {
+        // TODO: Allow reordering within one time step???
         cum_segs_delivered += 1;
-        if (cum_segs_loss_vector.back().complete) {
-            Loss loss = cum_segs_loss_vector.back();
-            loss.complete = false;
-            loss.ago -= 1;
-            assert(loss.ago >= 0);
-            cum_segs_loss_vector.push_back(loss);
-        }
-        int cur_ago = cum_segs_loss_vector.back().ago;
-        int index = HISTORY_SIZE - cur_ago;
-        if (index < HISTORY_SIZE) {
-            if (cum_segs_lost >= (history.at(index).creation_cum_sent_segs - cum_segs_delivered)) {
-                cum_segs_loss_vector.back().complete = true;
-            }
-        } else {
-            if (cum_segs_lost >= (cum_segs_sent - cum_segs_delivered)) {
-                cum_segs_loss_vector.back().complete = true;
+        cum_segs_lost = ack - cum_segs_delivered;
+
+        while (focus >= 0) {
+            History & focus_history = history[HISTORY_SIZE - 1 - focus];
+            if (ack >= focus_history.creation_cum_sent_segs) {
+                // Loss at {focus} time ago is completely observed 
+                if (ack == focus_history.creation_cum_sent_segs) {
+                    cum_segs_loss_vector.push_back(Loss{focus, focus_history.creation_cum_sent_segs - cum_segs_delivered});
+                } else {
+                    cum_segs_loss_vector.push_back(Loss{focus, focus_history.creation_cum_sent_segs - cum_segs_delivered + 1});
+                }
+                focus += 1;
+            } else {
+                break;
             }
         }
     }

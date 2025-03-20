@@ -13,6 +13,8 @@ typedef int SeqNum;		  // Pkts
 typedef double SegsRate;	  // Pkts per rtprop
 typedef int Step;
 
+using namespace std;
+
 struct ExternalLoss {
     int t;
     double l;
@@ -49,7 +51,7 @@ class CongCtrl
 
     public:
         // Important constant used in simulation
-        static constexpr int HISTORY_SIZE = 6;
+        static constexpr int HISTORY_SIZE = 7;
         static constexpr Time MAX_DELAY = 1000; // 1000ms initially
         static constexpr SegsRate MIN_BANDWIDTH = 5; 
         static constexpr SegsRate MAX_BANDWIDTH = 1000;
@@ -61,7 +63,7 @@ class CongCtrl
         struct Loss {
             Step ago;
             SeqNum creation_cum_lost_segs;
-            bool complete;
+            //bool complete;
         };
 
 
@@ -70,6 +72,7 @@ class CongCtrl
 
             SeqNum creation_cum_sent_segs;
 		    SeqNum creation_cum_delivered_segs;
+            SeqNum creation_cum_loss_segs;
 		    std::vector<Loss> loss;
 
         };
@@ -97,8 +100,7 @@ class CongCtrl
                   min_b(MIN_BUFFER),
                   max_b(MAX_BUFFER),
                   min_q(0),
-                  max_q(0) {
-
+                  max_q(0) {  
             }
 
         };
@@ -111,6 +113,8 @@ class CongCtrl
 	    SeqNum cum_segs_delivered;
 	    SeqNum cum_segs_lost;
         std::vector<Loss> cum_segs_loss_vector;
+        Step focus;
+
         SegsRate no_loss_rate;
 
     public:
@@ -120,15 +124,14 @@ class CongCtrl
             cum_segs_sent(0),  
             cum_segs_delivered(0),
             cum_segs_lost(0),
-            cum_segs_loss_vector({{0, 0, true}}),
+            cum_segs_loss_vector({{0, 0}}),
+            focus(-1), 
             no_loss_rate(0) {
-                for (int i = 0; i < (HISTORY_SIZE - 1); i++) {
-                    Loss loss = {0, 0, true};
+                for (int i = 0; i < (HISTORY_SIZE); i++) {
+                    Loss loss = {0, 0};
                     std::vector<Loss> losses = {loss};
-                    history.push_back( {MAX_DELAY, 0, 0, losses} );
+                    history.push_back( {MAX_DELAY, 0, 0, 0, losses} );
                 }
-                updateHistory();
-                //std::cout << "JiJI" << " " << history.back().loss.back().ago << " " << cum_segs_loss_vector.back().ago << std::endl;
                 updateBeliefBound();
         }
 
@@ -144,21 +147,19 @@ class CongCtrl
 
         void updateHistory() {
             // Vector copied by value
-            History new_history = {beliefs.min_rtt, cum_segs_sent, cum_segs_delivered, cum_segs_loss_vector};
-            history.push_back(new_history);
-            // Need to make sure at least one complete loss
-            std::vector<Loss> new_cum_segs_loss_vector = {};
-            for (auto i = cum_segs_loss_vector.rbegin(); i != cum_segs_loss_vector.rend(); i++) {
-                Loss loss = *i;
-                loss.ago += 1;
-                new_cum_segs_loss_vector.push_back(loss);
-                if (loss.complete) {
-                    break;
-                }
+            if (cum_segs_loss_vector.size() == 0) {
+                Loss latest_ob_loss(history.back().loss.back());
+                latest_ob_loss.ago += 1;
+                history.push_back(History{beliefs.min_rtt, cum_segs_sent, cum_segs_delivered, cum_segs_lost, {latest_ob_loss}});
+            } else {
+                history.push_back(History{beliefs.min_rtt, cum_segs_sent, cum_segs_delivered, cum_segs_lost, cum_segs_loss_vector});
             }
+
+            focus += 1;
             cum_segs_loss_vector = {};
-            for (auto i = new_cum_segs_loss_vector.rbegin(); i != new_cum_segs_loss_vector.rend(); i++) {
-                cum_segs_loss_vector.push_back(*i);
+            // Account for sending zero pkts in the last RTT
+            if ((cum_segs_lost + cum_segs_delivered) >= cum_segs_sent) {
+                cum_segs_loss_vector.push_back(Loss{0, cum_segs_lost});
             }
         }
 
@@ -176,18 +177,13 @@ class CongCtrl
                 historys[i].s = (double)ob.creation_cum_delivered_segs;
                 historys[i].lo = &(lossess[i][0]);
                 historys[i].length = (int)ob.loss.size();
-                // The last loss entry violate rust library's assumption
-                if (!ob.loss.back().complete) {
-                    historys[i].length -= 1;
-                }
             } 
 
             // Query the rust static library
-    
-            //ExternalBeliefBound bb = compute_belief_bounds_c_test();
             ExternalBeliefBound bb = compute_belief_bounds_c(&historys[0], HISTORY_SIZE);
             //std::cout << "New BB is: " <<" "<< bb.min_c <<  " " << bb.max_q << std::endl;
-            //std::cout << "New max allowed rate is: " << bb.rate << std::endl;
+            //std::cout << "New BB is: " <<" "<< bb.min_b <<  " " << bb.max_b << std::endl;
+            std::cout << "New max allowed rate is: " << bb.rate << std::endl;
             // Update the belief bound
             beliefs.min_c = bb.min_c;
             beliefs.max_c = bb.max_c;

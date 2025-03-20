@@ -164,6 +164,43 @@ int main( int argc, char *argv[] )
   // Skip the first small header file
   const Optional<RasterHandle> raster = input.get_next_frame();
 
+  auto fetch_start = system_clock::now();
+  poller.add_action( Poller::Action( encode_pipe.second, Direction::In,
+    [&]() -> Result {
+      encode_pipe.second.read();
+      // Simulate 30 fps
+      fetch_start = system_clock::now();
+      Optional<RasterHandle> raster = input.get_next_frame();
+      if ( not raster.initialized() ) {
+        return { ResultType::Exit, EXIT_FAILURE };
+      }
+      ++frame_no;
+      abr.add_fetch_frame(raster.get());
+      encode_pipe.first.write( "1" );
+
+      return ResultType::Continue;
+    }, [&]() { 
+      std::chrono::duration<double, std::ratio<1,1000>> diff = (system_clock::now() - fetch_start); // in millis
+      return diff.count() >= (33); 
+    } ) 
+  );
+
+    // only send new frames after min_rtt
+  poller.add_action( Poller::Action( update_pipe.second, Direction::In, [&]() {
+      update_pipe.second.read();
+      // update history and state of cong_ctrl 
+      //cc.updateHistory();
+      //cc.updateBeliefBound();
+      abr.add_fec();
+      abr.encode_fetched_frames(17000);
+      last_sent = system_clock::now();
+      update_pipe.first.write( "1" );
+      return ResultType::Continue;
+    }, [&]() { 
+      std::chrono::duration<double, std::ratio<1,1000>> diff = (system_clock::now() - last_sent); // in millis
+      return diff.count() >= (300); 
+  } ) );
+
   poller.add_action( Poller::Action( socket, Direction::In,
     [&]()
     {
@@ -187,24 +224,57 @@ int main( int argc, char *argv[] )
     } )
   );
 
-  poller.add_action( Poller::Action( encode_pipe.second, Direction::In,
-    [&]() -> Result {
-      encode_pipe.second.read();
+  poller.add_action( Poller::Action( socket, Direction::Out, [&]() {
+      assert( pacer.ms_until_due() == 0 );
+      double cur_time;
+      while ( pacer.ms_until_due() == 0 ) {
+        assert( not pacer.empty() );
 
-      auto fetch_start = system_clock::now();
-      Optional<RasterHandle> raster = input.get_next_frame();
-      if ( not raster.initialized() ) {
-        return { ResultType::Exit, EXIT_FAILURE };
+        cur_time = current_timestamp( start_time_point );
+        congctrl.set_timestamp(cur_time);
+
+        string to_sent = pacer.front();
+        FECPacket packet = FECPacket{to_sent};
+        socket.send( to_sent );
+        pacer.pop();
+        pkt_nums[packet.frame_no_][packet.pkt_no_] = pkt_no;
+        pkt_sent_time[pkt_no] = system_clock::now();
+
+        congctrl.onPktSent( pkt_no );
+        ++pkt_no;
       }
-      ++frame_no;
-      // Simulate 30 fps
-      std::chrono::duration<double, std::ratio<1,1000>> fetch_duration = (system_clock::now() - fetch_start);
-      if ((int)fetch_duration.count() < 33) {
-        this_thread::sleep_for(chrono::milliseconds(33 - (int)fetch_duration.count()));
+
+      if (pacer.empty()) {
+        update_pipe.first.write( "1" );
       }
 
-      abr.add_fetch_frame(raster.get());
+      return ResultType::Continue;
+  }, [&]() { 
+    //std::chrono::duration<double, std::ratio<1,1000>> diff = (system_clock::now() - last_sent); // in millis
+    //return (diff.count() >= rtprop) && pacer.ms_until_due() == 0; 
+    return pacer.ms_until_due() == 0; } ) );
 
+
+  // Start!!!
+  encode_pipe.first.write( "1" );
+  update_pipe.first.write( "1" );
+
+  while ( true ) {
+    const auto poll_result = poller.poll(0);
+    if ( poll_result.result == Poller::Result::Type::Exit ) {
+      if ( poll_result.exit_status ) {
+        //cerr << "Connection error." << endl;
+        continue;
+      }
+
+      return poll_result.exit_status;
+    }
+    // Advanced to next action? 
+    
+  }
+
+  return EXIT_FAILURE;
+}
       // this thread will spawn all the encoding jobs and will wait on the results
       /** 
       thread(
@@ -285,82 +355,3 @@ int main( int argc, char *argv[] )
         }
       ).detach();
       **/
-
-      encode_pipe.first.write( "1" );
-
-      return ResultType::Continue;
-    } ) 
-  );
-
-  //SeqNum sent_pkt_count = 0;
-  //system_clock::time_point last_sent_pkt = system_clock::now();
-  //int rtprop = 200;
-
-  poller.add_action( Poller::Action( socket, Direction::Out, [&]() {
-      assert( pacer.ms_until_due() == 0 );
-      double cur_time;
-      while ( pacer.ms_until_due() == 0 ) {
-        assert( not pacer.empty() );
-
-        cur_time = current_timestamp( start_time_point );
-        congctrl.set_timestamp(cur_time);
-
-        string to_sent = pacer.front();
-        FECPacket packet = FECPacket{to_sent};
-        socket.send( to_sent );
-        pacer.pop();
-        pkt_nums[packet.frame_no_][packet.pkt_no_] = pkt_no;
-        pkt_sent_time[pkt_no] = system_clock::now();
-
-        congctrl.onPktSent( pkt_no );
-        ++pkt_no;
-      }
-
-      if (pacer.empty()) {
-        update_pipe.first.write( "1" );
-      }
-
-      return ResultType::Continue;
-  }, [&]() { 
-    //std::chrono::duration<double, std::ratio<1,1000>> diff = (system_clock::now() - last_sent); // in millis
-    //return (diff.count() >= rtprop) && pacer.ms_until_due() == 0; 
-    return pacer.ms_until_due() == 0; } ) );
-
-  int grace_period = 1000;
-  // only send new frames after min_rtt
-  poller.add_action( Poller::Action( update_pipe.second, Direction::In, [&]() {
-      update_pipe.second.read();
-      // update history and state of cong_ctrl 
-      //cc.updateHistory();
-      //cc.updateBeliefBound();
-      abr.add_fec();
-      abr.encode_fetched_frames(17000);
-      last_sent = system_clock::now();
-      update_pipe.first.write( "1" );
-      return ResultType::Continue;
-    }, [&]() { 
-      std::chrono::duration<double, std::ratio<1,1000>> diff = (system_clock::now() - last_sent); // in millis
-      return diff.count() >= (cc.get_action_intertime() + grace_period); 
-  } ) );
-
-
-  // Start!!!
-  encode_pipe.first.write( "1" );
-  update_pipe.first.write( "1" );
-
-  while ( true ) {
-    const auto poll_result = poller.poll(grace_period);
-    if ( poll_result.result == Poller::Result::Type::Exit ) {
-      if ( poll_result.exit_status ) {
-        //cerr << "Connection error." << endl;
-        continue;
-      }
-
-      return poll_result.exit_status;
-    }
-    // Advanced to next action? 
-    
-  }
-
-  return EXIT_FAILURE;
-}

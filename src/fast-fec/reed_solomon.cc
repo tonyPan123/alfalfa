@@ -23,7 +23,8 @@
       pkts_in_this_frame_( str( 8, 2 ).le16() ),
       pkts_needed_for_decoding_( str( 10, 2 ).le16() ),
       payload_( str( 12 ).to_string() )
-   {}
+   {//std::cout << payload_.length() << std::endl;
+      }
 
    std::string FECPacket::put_header_field( const uint16_t n )
    {
@@ -56,45 +57,43 @@
    FECFrame::FECFrame(const std::vector<Packet> packets, const uint16_t connection_id, const uint32_t frame_no, const uint16_t fec_length) {
       const uint16_t total_num = packets.size();
       assert(total_num >= 1);
+      //  Maximum size of packet
+      size_t fec_payload_len = 1424 + 1;
 
-      // Add data pkts first
-      uint16_t pkt_no = 0;
-      for ( const auto & packet : packets ) {
-         std::string payload = packet.to_string();
-         fecpkts.push_back(FECPacket {connection_id, frame_no, pkt_no, (uint16_t)(total_num + fec_length), total_num, payload});
-         pkt_no++;
+      char **data, **coding;
+      data = talloc(char *, total_num);
+      for (int i = 0; i < total_num; i++) {
+        data[i] = talloc(char, fec_payload_len);
+        assert(packets[i].to_string().length() < fec_payload_len);
+        strcpy (data[i], packets[i].to_string().c_str());
       }
-      // Add fec pkts
-      std::vector<std::string> fec_payloads;
+
+      coding = talloc(char *, fec_length);
       for (int i = 0; i < fec_length; i++) {
-         fec_payloads.push_back("");   
-      }
-      size_t fec_payload_len = fecpkts.at(0).payload_.length();
-      //std::cout << "FEC packet length is:" << fec_payload_len << std::endl;
-
-      for (size_t j = 0; j < fec_payload_len; j++) {
-         std::string message;
-         for (uint16_t k = 0; k < total_num; k++) {
-            size_t datalog_len = fecpkts.at(k).payload_.length();
-            if (j < datalog_len) {
-               message += fecpkts.at(k).payload_[j];
-            } else {
-               message += (char)0x00;
-            }
-         }
-         std::string parities = make_fec(message, fec_length);  
-         assert(parities.length() == fec_length);
-         for (uint16_t k = 0; k < fec_length; k++) {
-            fec_payloads.at(k) += parities[k];
-         }
+        coding[i] = talloc(char, fec_payload_len);
       }
 
-      for ( const auto & payload : fec_payloads ) {
-         fecpkts.push_back(FECPacket {connection_id, frame_no, pkt_no, (uint16_t)(total_num + fec_length), total_num, payload});
+      // k + m <= 2^w
+      assert(total_num + fec_length <= 256);
+      int *matrix;
+      matrix = reed_sol_vandermonde_coding_matrix(total_num, fec_length, 8);
+      jerasure_matrix_encode(total_num, fec_length, 8, matrix, data, coding, fec_payload_len);
+
+
+      uint16_t pkt_no = 0;
+      for ( const auto & pkt : packets ) {
+         // Do we need padding here???
+         ordinaryPkts.push_back(FECPacket {connection_id, frame_no, pkt_no, (uint16_t)(total_num + fec_length), total_num, pkt.to_string()});
          pkt_no++;
       }
 
-      assert(fecpkts.size() == (std::size_t)(total_num + fec_length));
+      for (int i = 0; i < fec_length; i++) {
+         std::string parity(coding[i], fec_payload_len - 1);
+         parityPkts.push_back(FECPacket {connection_id, frame_no, pkt_no, (uint16_t)(total_num + fec_length), total_num, parity});
+         pkt_no++;
+      }
+
+      //assert(fecpkts.size() == (std::size_t)(total_num + fec_length));
    }
 
 
@@ -106,12 +105,10 @@
       }
    }
 
-   
-
 
    int ReedSolomon::reed_test() {
-      int k = 60;
-      int m = 2;
+      int k = 40;
+      int m = 256 - k;
       int w = 8;
       int l = 1500;
 
@@ -122,7 +119,7 @@
 
       matrix = reed_sol_vandermonde_coding_matrix(k, m, w);
 
-      MOA_Seed(520);
+      MOA_Seed(510);
       data = talloc(char *, k);
       dcopy = talloc(char *, k);
       for (int i = 0; i < k; i++) {
@@ -144,9 +141,10 @@
       //std::cout << *matrix << std::endl;
       jerasure_matrix_encode(k, m, w, matrix, data, coding, l);
 
-      //for (int i = 0; i < m; i++) {
-      //   std::cout << (int)coding[i][1200] << std::endl;
-      //}
+      for (int i = 0; i < m; i++) {
+         std::string a(coding[i], l);
+         //std::cout << a.length() << std::endl;
+      }
 
       return 1;
    }
@@ -162,7 +160,8 @@
         frame_no_( str( 2, 4 ).le32() ),
         pkt_no_( str( 6, 2 ).le16() ),
         frame_ack_( str( 8 ).to_string() )
-      {}
+      {
+      }
 
    std::string AckFECPacket::to_string()
    {

@@ -50,7 +50,8 @@ class FECFrame
 {
 
     public: 
-    std::vector<FECPacket> fecpkts;
+    std::vector<FECPacket> ordinaryPkts;
+    std::vector<FECPacket> parityPkts;
 
     FECFrame();
     FECFrame(const std::vector<Packet> packets, const uint16_t connection_id, const uint32_t frame_no, const uint16_t fec_length);
