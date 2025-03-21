@@ -152,12 +152,13 @@ int main( int argc, char *argv[] )
   SeqNum pkt_no = 0;
   //auto start = chrono::system_clock::now();
   system_clock::time_point last_sent = system_clock::now();
-  chrono::high_resolution_clock::time_point start_time_point = chrono::high_resolution_clock::now();
+  [[maybe_unused]] chrono::high_resolution_clock::time_point start_time_point = chrono::high_resolution_clock::now();
   unordered_map<uint32_t, unordered_map<uint16_t, SeqNum>> pkt_nums; // TODO: in packet or map?
   unordered_map<SeqNum, system_clock::time_point> pkt_sent_time;
+
+  //SlowConvManual congctrl("./log", 1);
   CongCtrl cc; 
-  SlowConvManual congctrl("./log", 1);
-  ABR abr {input};
+  ABR abr {input, connection_id};
 
   [[maybe_unused]] auto start = chrono::system_clock::now();
 
@@ -189,16 +190,16 @@ int main( int argc, char *argv[] )
   poller.add_action( Poller::Action( update_pipe.second, Direction::In, [&]() {
       update_pipe.second.read();
       // update history and state of cong_ctrl 
-      //cc.updateHistory();
-      //cc.updateBeliefBound();
-      abr.add_fec();
-      abr.encode_fetched_frames(17000);
+      cc.updateHistory();
+      cc.updateBeliefBound();
+      abr.add_fec(pacer, cc);
+      abr.encode_fetched_frames(cc.beliefs.min_c * Packet::MAXIMUM_PAYLOAD);
       last_sent = system_clock::now();
       update_pipe.first.write( "1" );
       return ResultType::Continue;
     }, [&]() { 
       std::chrono::duration<double, std::ratio<1,1000>> diff = (system_clock::now() - last_sent); // in millis
-      return diff.count() >= (300); 
+      return diff.count() >= (100); 
   } ) );
 
   poller.add_action( Poller::Action( socket, Direction::In,
@@ -226,21 +227,21 @@ int main( int argc, char *argv[] )
 
   poller.add_action( Poller::Action( socket, Direction::Out, [&]() {
       assert( pacer.ms_until_due() == 0 );
-      double cur_time;
+      //double cur_time;
       while ( pacer.ms_until_due() == 0 ) {
         assert( not pacer.empty() );
 
-        cur_time = current_timestamp( start_time_point );
-        congctrl.set_timestamp(cur_time);
+        //cur_time = current_timestamp( start_time_point );
+        //congctrl.set_timestamp(cur_time);
 
         string to_sent = pacer.front();
-        FECPacket packet = FECPacket{to_sent};
+        //FECPacket packet = FECPacket{to_sent};
         socket.send( to_sent );
         pacer.pop();
-        pkt_nums[packet.frame_no_][packet.pkt_no_] = pkt_no;
-        pkt_sent_time[pkt_no] = system_clock::now();
+        //pkt_nums[packet.frame_no_][packet.pkt_no_] = pkt_no;
+        //pkt_sent_time[pkt_no] = system_clock::now();
 
-        congctrl.onPktSent( pkt_no );
+        //congctrl.onPktSent( pkt_no );
         ++pkt_no;
       }
 

@@ -160,6 +160,8 @@ class CongCtrl
             // Account for sending zero pkts in the last RTT
             if ((cum_segs_lost + cum_segs_delivered) >= cum_segs_sent) {
                 cum_segs_loss_vector.push_back(Loss{0, cum_segs_lost});
+                assert(focus == 0);
+                focus = -1;
             }
         }
 
@@ -181,7 +183,7 @@ class CongCtrl
 
             // Query the rust static library
             ExternalBeliefBound bb = compute_belief_bounds_c(&historys[0], HISTORY_SIZE);
-            //std::cout << "New BB is: " <<" "<< bb.min_c <<  " " << bb.max_q << std::endl;
+            std::cout << "New BB is: " <<" "<< bb.min_c <<  " " << bb.max_q << std::endl;
             //std::cout << "New BB is: " <<" "<< bb.min_b <<  " " << bb.max_b << std::endl;
             std::cout << "New max allowed rate is: " << bb.rate << std::endl;
             // Update the belief bound
