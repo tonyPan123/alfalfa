@@ -97,17 +97,17 @@ int main()
 
   /* frame no => FragmentedFrame; used when receiving packets out of order */
   unordered_map<size_t, FragmentedFrame> fragmented_frames;
-  size_t next_frame_no = 0;
+  //size_t next_frame_no = 0;
 
   /* EWMA */
   AverageInterPacketDelay avg_delay;
 
   /* decoder states */
   Decoder decoder = Decoder {1280, 720};
-  uint32_t current_state = decoder.minihash();
-  const uint32_t initial_state = current_state;
+  //uint32_t current_state = decoder.minihash();
+  //const uint32_t initial_state = current_state;
   deque<uint32_t> complete_states;
-  auto next_ack_is_due = chrono::system_clock::now();
+  //auto next_ack_is_due = chrono::system_clock::now();
   const auto interval_between_acks = chrono::microseconds( 0 );
   /* memory usage logs */
   //system_clock::time_point next_mem_usage_report = system_clock::now();
@@ -121,109 +121,11 @@ int main()
       //cout << new_fragment.source_address.to_string() << " " << socket.local_address().to_string()  << endl;
       /* parse into Packet */
       const FECPacket fecpacket { new_fragment.payload };
-      cout << "Receive:" << fecpacket.pkt_no_ << endl;
-      // Not parity packets
-      if (fecpacket.pkt_no_ < fecpacket.pkts_needed_for_decoding_) {
-        const Packet packet { fecpacket.payload_ };
+      cout << "Receive:" << fecpacket.fec_frame_no_ << " " << fecpacket.pkt_no_ << endl;
 
-        if ( packet.frame_no() < next_frame_no ) {
-          /* we're not interested in this anymore */
-          return ResultType::Continue;
-        }
-        else if ( packet.frame_no() > next_frame_no ) {
-          /* current frame is not finished yet, but we just received a packet
-            for the next frame, so here we just encode the partial frame and
-            display it and move on to the next frame */
-          cerr << "got a packet for frame #" << packet.frame_no()
-              << ", display previous frame(s)." << endl;
+      AckFECPacket ack = AckFECPacket (connection_id, fecpacket.fec_frame_no_, fecpacket.pkt_no_, "");
+      ack.sendto( socket, new_fragment.source_address );   
 
-          for ( size_t i = next_frame_no; i < packet.frame_no(); i++ ) {
-            if ( fragmented_frames.count( i ) == 0 ) continue;
-
-            //enqueue_frame( player, fragmented_frames.at( i ).partial_frame() );
-            fragmented_frames.erase( i );
-          }
-
-          next_frame_no = packet.frame_no();
-          current_state = decoder.minihash();
-        }
-
-        /* add to current frame */
-        if ( fragmented_frames.count( packet.frame_no() ) ) {
-          fragmented_frames.at( packet.frame_no() ).add_packet( packet );
-        } else {
-          /*
-            This was judged "too fancy" by the Code Review Board of Dec. 29, 2016.
-
-            fragmented_frames.emplace( std::piecewise_construct,
-                                      forward_as_tuple( packet.frame_no() ),
-                                      forward_as_tuple( connection_id, packet ) );
-          */
-
-          fragmented_frames.insert( make_pair( packet.frame_no(),
-                                              FragmentedFrame( connection_id, packet ) ) );
-        }
-
-        /* is the next frame ready to be decoded? Assume no loss */
-        if ( fragmented_frames.count( next_frame_no ) > 0 and fragmented_frames.at( next_frame_no ).complete() ) {
-          auto & fragment = fragmented_frames.at( next_frame_no );
-
-          uint32_t expected_source_state = fragment.source_state();
-
-          if ( current_state == expected_source_state and
-              expected_source_state != initial_state ) {
-            /* Currently assume that there is no loss of frame*/
-
-          }
-
-          // here we apply the frame
-          const Optional<RasterHandle> raster = decoder.parse_and_decode_frame(fragment.frame());
-          //cout << "Decoding!!"  << next_frame_no << " "  << endl;
-
-          // state "after" applying the frame
-          current_state = decoder.minihash();
-
-          if ( current_state != fragment.target_state()) {
-            /* this is a full state. let's save it */
-              cout << "Bad!!" << endl;
-          }
-
-          fragmented_frames.erase( next_frame_no );
-          next_frame_no++;
-        }
-
-        avg_delay.add( new_fragment.timestamp_us, packet.time_since_last() );
-
-        this_thread::sleep_until( next_ack_is_due );
-        next_ack_is_due += interval_between_acks;
-
-        AckPacket ack_back = AckPacket( connection_id, packet.frame_no(), packet.fragment_no(),
-                              avg_delay.int_value(), current_state,complete_states );
-        
-
-        thread(
-          [fecpacket, &packet, &ack_back, &socket, &new_fragment, &connection_id] ()
-          {
-            
-            //cout << "Ack!" << fecpacket.frame_no_ <<" "<< fecpacket.pkt_no_ << endl;
-            //std::this_thread::sleep_for(std::chrono::milliseconds(70));
-            AckFECPacket ack = AckFECPacket (connection_id, fecpacket.frame_no_, fecpacket.pkt_no_, ack_back.to_string());
-            ack.sendto( socket, new_fragment.source_address );
-          }
-        ).detach();
-
-      } else {
-        thread(
-          [fecpacket, &socket, &new_fragment, &connection_id]()
-          {
-            
-            //cout << "Ack!" << fecpacket.frame_no_ <<" "<< fecpacket.pkt_no_ << endl;
-            //std::this_thread::sleep_for(std::chrono::milliseconds(70));
-            AckFECPacket ack = AckFECPacket (connection_id, fecpacket.frame_no_, fecpacket.pkt_no_, "");
-            ack.sendto( socket, new_fragment.source_address );   
-          }
-        ).detach();
-      }
       std::this_thread::sleep_for(std::chrono::milliseconds(1));
 
       return ResultType::Continue;

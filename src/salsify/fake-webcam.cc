@@ -134,7 +134,8 @@ int main( int argc, char *argv[] )
 
     /* construct Socket for outgoing datagrams */
   UDPSocket socket;
-  socket.connect( Address( "0", "8889" ) );
+  socket.connect( Address( "10.0.0.1", "8889" ) );
+  //socket.connect( Address( "0", "8889" ) );
   socket.set_timestamps();
 
   /* get connection_id */
@@ -164,6 +165,51 @@ int main( int argc, char *argv[] )
 
   // Skip the first small header file
   const Optional<RasterHandle> raster = input.get_next_frame();
+
+  poller.add_action( Poller::Action( socket, Direction::Out, [&]() {
+    assert( pacer.ms_until_due() == 0 );
+    while ( pacer.ms_until_due() == 0 ) {
+      assert( not pacer.empty() );
+      string to_sent = pacer.front();
+      socket.send( to_sent );
+      pacer.pop();
+
+      FECPacket sent {to_sent};
+      ++pkt_no;
+      pkt_nums[sent.fec_frame_no_][sent.pkt_no_] = pkt_no;
+      pkt_sent_time[pkt_no] = system_clock::now();
+      cc.onSent();
+    }
+    return ResultType::Continue;
+}, [&]() { 
+  return pacer.ms_until_due() == 0; } ) );
+
+  poller.add_action( Poller::Action( socket, Direction::In,
+    [&]()
+    {
+      auto packet = socket.recv();
+      AckFECPacket ack( packet.payload );
+
+      if ( ack.connection_id_ != connection_id ) {
+        /* this is not an ack for this session! */
+        return ResultType::Continue;
+      }
+
+
+      // Need also to take loss into account
+      // Need to check content of the pkt to detect dup
+      uint32_t pkt_num = pkt_nums[ack.fec_frame_no_][ack.pkt_no_];
+      std::chrono::duration<double, std::ratio<1,1000>> diff = (system_clock::now() - pkt_sent_time[pkt_num]); // in millis
+      cc.onACK(pkt_num, diff.count());
+      cout << "Get Ack!" << ack.fec_frame_no_ <<" "<< ack.pkt_no_ << " " << diff.count() << endl;
+      if (ack.fec_frame_no_ == 24 && ack.pkt_no_ == 100) {
+        std::chrono::duration<double, std::ratio<1,1000>> diff = (system_clock::now() - start);
+        cout << "Finish in " << diff.count() <<"ms" << endl;
+      }
+
+      return ResultType::Continue;
+    } )
+  );
 
   auto fetch_start = system_clock::now();
   poller.add_action( Poller::Action( encode_pipe.second, Direction::In,
@@ -202,60 +248,6 @@ int main( int argc, char *argv[] )
       return diff.count() >= (100); 
   } ) );
 
-  poller.add_action( Poller::Action( socket, Direction::In,
-    [&]()
-    {
-      auto packet = socket.recv();
-      AckFECPacket ack( packet.payload );
-
-      if ( ack.connection_id_ != connection_id ) {
-        /* this is not an ack for this session! */
-        return ResultType::Continue;
-      }
-
-
-      // Need also to take loss into account
-      // Need to check content of the pkt to detect dup
-      uint32_t pkt_num = pkt_nums[ack.frame_no_][ack.pkt_no_];
-      std::chrono::duration<double, std::ratio<1,1000>> diff = (system_clock::now() - pkt_sent_time[pkt_num]); // in millis
-      cc.onACK(pkt_num, diff.count());
-      cout << "Get Ack!" << ack.frame_no_ <<" "<< ack.pkt_no_ << " " << diff.count() << endl;
-
-      return ResultType::Continue;
-    } )
-  );
-
-  poller.add_action( Poller::Action( socket, Direction::Out, [&]() {
-      assert( pacer.ms_until_due() == 0 );
-      //double cur_time;
-      while ( pacer.ms_until_due() == 0 ) {
-        assert( not pacer.empty() );
-
-        //cur_time = current_timestamp( start_time_point );
-        //congctrl.set_timestamp(cur_time);
-
-        string to_sent = pacer.front();
-        //FECPacket packet = FECPacket{to_sent};
-        socket.send( to_sent );
-        pacer.pop();
-        //pkt_nums[packet.frame_no_][packet.pkt_no_] = pkt_no;
-        //pkt_sent_time[pkt_no] = system_clock::now();
-
-        //congctrl.onPktSent( pkt_no );
-        ++pkt_no;
-      }
-
-      if (pacer.empty()) {
-        update_pipe.first.write( "1" );
-      }
-
-      return ResultType::Continue;
-  }, [&]() { 
-    //std::chrono::duration<double, std::ratio<1,1000>> diff = (system_clock::now() - last_sent); // in millis
-    //return (diff.count() >= rtprop) && pacer.ms_until_due() == 0; 
-    return pacer.ms_until_due() == 0; } ) );
-
-
   // Start!!!
   encode_pipe.first.write( "1" );
   update_pipe.first.write( "1" );
@@ -276,83 +268,4 @@ int main( int argc, char *argv[] )
 
   return EXIT_FAILURE;
 }
-      // this thread will spawn all the encoding jobs and will wait on the results
-      /** 
-      thread(
-        [raster, &cc, &first_encoder, &second_encoder, connection_id, &frame_no, &real_frame_no, &first_encoder_lock, &second_encoder_lock, &start]()
-        {
-          auto encode_start = system_clock::now();
-
-          uint32_t source_minihash;
-          vector<uint8_t> output;
-          uint32_t target_minihash; 
-          Encoder encoder_copy_first = first_encoder;
-          Encoder encoder_copy_second = second_encoder;
-          size_t target_size = 1 * cc.beliefs.min_c;
-          uint32_t frame_no_to_use = 0;
-          if (frame_no % 2  == 1) {
-            first_encoder_lock.lock();
-            source_minihash = first_encoder.minihash();
-            //output = first_encoder.encode_with_quantizer( raster.get(), 120);
-            output = first_encoder.encode_with_target_size( raster.get(), target_size * Packet::MAXIMUM_PAYLOAD);
-            target_minihash = first_encoder.minihash();
-            // Skip the frame if too big
-            if (output.size() > 3 * target_size * Packet::MAXIMUM_PAYLOAD) {
-              first_encoder = move(encoder_copy_first);
-              cout << "Oversize" << endl;
-              first_encoder_lock.unlock();
-              return;
-            }
-            real_frame_no++;
-            frame_no_to_use = real_frame_no;
-            first_encoder_lock.unlock();
-          } else {
-            second_encoder_lock.lock();
-            source_minihash = second_encoder.minihash();
-            //output = second_encoder.encode_with_quantizer( raster.get(), 120);
-            output = second_encoder.encode_with_target_size( raster.get(), target_size * Packet::MAXIMUM_PAYLOAD);
-            target_minihash = second_encoder.minihash();
-            // Skip the frame if too big
-            if (output.size() > 3 * target_size * Packet::MAXIMUM_PAYLOAD) {
-              second_encoder = move(encoder_copy_second);
-              cout << "Oversize" << endl;
-              second_encoder_lock.unlock();
-              return;
-            }
-            real_frame_no++;
-            frame_no_to_use = real_frame_no;
-            second_encoder_lock.unlock();
-          }
-
-          FragmentedFrame ff { connection_id, source_minihash, target_minihash,
-                               frame_no_to_use,
-                               0,
-                               output};
-
-          cout << "Output size is: " << ff.packets().size() << endl;
-          // FEC
-          //FECFrame fecframe {ff.packets(), ff.connection_id(), ff.frame_no(), (uint16_t)(256 - ff.packets().size())};
-
-          auto encode_end = system_clock::now();
-          std::chrono::duration<double, std::ratio<1,1000>> encode_duration = (encode_end - encode_start);
-          cout << "Encoding of " <<  ff.frame_no() << " takes: " << encode_duration.count() << endl;
-
-          //if (frame_no == 80) {
-          //  auto end = system_clock::now();
-          //  std::chrono::duration<double, std::ratio<1,1000>> full_encode_duration = (end - start);
-          //  cout << "Encoding totally takes: " << full_encode_duration.count() << endl;
-          //}
-
-          // Add packets into pacer??
-          //for ( const auto & packet : fecframe.fecpkts ) {
-          //  pacer.push( packet.to_string(), 0);
-            //pkt_nums[packet.frame_no_][packet.pkt_no_] = pkt_no;
-            //pkt_sent_time[pkt_no] = system_clock::now();
-            //socket.send( packet.to_string() );
-            //cout << "Send:" << packet.pkt_no_ << endl;
-            //cc.onSent();
-            //++pkt_no;
-          //} 
-        }
-      ).detach();
-      **/
+ 

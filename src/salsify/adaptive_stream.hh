@@ -16,6 +16,8 @@
 
 using namespace std;
 
+const int MILLI_TO_MICRO = 1000;
+
 struct EncodeJob
 {
     RasterHandle raster;
@@ -160,14 +162,17 @@ class ABR {
             if (encoded_output_by_rtt[0].initialized) {
                 FECPre & focus = encoded_output_by_rtt[0];
                 //assert((uint32_t)focus.total_len <= (uint32_t)cc.beliefs.min_c);
+
                 if (focus.total_len <= (uint32_t)cc.beliefs.min_c) {
                     fec_frame_no++;
-                    cout << "Checkpoint1: " << cc.beliefs.min_c << " " << focus.total_len << " " <<(uint16_t)(cc.beliefs.min_c - focus.total_len) << endl;
-                    FECFrame fec_frame {fec_frame_no, focus, (uint16_t)(cc.beliefs.min_c - focus.total_len)};
+                    cout << "Checkpoint1: " << cc.beliefs.min_c << " " << focus.total_len << " " <<(uint16_t)(10 + cc.beliefs.min_c - focus.total_len) << endl;
+                    FECFrame fec_frame {fec_frame_no, focus, (uint16_t)(10 + cc.beliefs.min_c - focus.total_len)};
                     encoded_output_by_rtt[0] =  FECPre{connection_id};
-                    //for (FECPacket & pkt : fec_frame.pkts) {
-                        //pacer.push( pkt.to_string(), 0);
-                    //}
+                    int pkt_interdelay = cc.beliefs.min_rtt / fec_frame.total_pkts; 
+                    for (FECPacket & pkt : fec_frame.pkts) {
+                        pacer.push( pkt.to_string(), pkt_interdelay * MILLI_TO_MICRO);
+                    }
+                    cout << "Inter-delay is  " << pacer.ms_until_due() << endl; 
                     cout << "gegeda1 " << fec_frame.pkts.size() << endl;
                 }
             }
