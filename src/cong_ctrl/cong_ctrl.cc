@@ -7,8 +7,13 @@ void CongCtrl::onSent() {
 
 // How to handle with pkts reordering?
 void CongCtrl::onACK(SeqNum ack, Time rtt) {
+    if (ack > get_max_allowed_ack()) {
+        // It will be handled later after update_histroy()
+        buffered_ack.push_back(ack);
+        buffered_rtt.push_back(rtt);
+        return;
+    }
     // TODO: add case for handling focus == -1
-    
     assert(focus <= (HISTORY_SIZE - 1));
     assert(focus >= 0);
     // Assume ack start from 1
@@ -27,7 +32,7 @@ void CongCtrl::onACK(SeqNum ack, Time rtt) {
                 } else {
                     cum_segs_loss_vector.push_back(Loss{focus, focus_history.creation_cum_sent_segs - cum_segs_delivered + 1});
                 }
-                focus += 1;
+                focus -= 1;
             } else {
                 break;
             }

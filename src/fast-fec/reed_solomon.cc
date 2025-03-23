@@ -24,17 +24,27 @@ using namespace std;
         pkt_no_(pkt_no_),
         payload_(payload_)
       {}
-   /*
+   
    FECPacket::FECPacket( const Chunk & str )
       : connection_id_( str( 0, 2 ).le16() ),
-      frame_no_( str( 2, 4 ).le32() ),
-      pkt_no_( str( 6, 2 ).le16() ),
-      pkts_in_this_frame_( str( 8, 2 ).le16() ),
-      pkts_needed_for_decoding_( str( 10, 2 ).le16() ),
-      payload_( str( 12 ).to_string() )
-   {//std::cout << payload_.length() << std::endl;
+      fec_frame_no_( str( 2, 4 ).le32() ),
+      total_pkts( str( 6, 2 ).le16() ),
+      pkts_needed_for_decoding( str( 8, 2 ).le16() ),
+      frame_no_start( str( 10, 4 ).le32() ),
+      frame_no_end( str( 14, 4 ).le32() ),
+      frame_no_to_length( {} )
+   {
+      int start = 18;
+      for (uint32_t frame_no = frame_no_start; frame_no <= frame_no_end; frame_no++) {
+         uint16_t length = str( start, 2 ).le16();
+         frame_no_to_length[frame_no] = length;
+         start += 2;
       }
-   */
+      pkt_no_ = str( start, 2 ).le16();
+      start += 2;
+      payload_ = str( start ).to_string();
+   }
+   
    std::string FECPacket::put_header_field( const uint16_t n )
    {
       const uint16_t network_order = htole16( n );
@@ -76,7 +86,7 @@ using namespace std;
         fec_frame_no(fec_frame_no),
         frame_no_start(pre.frame_no_start),
         frame_no_end(pre.frame_no_end), 
-        frame_no_to_length({}), 
+        frame_no_to_length(), 
         pkts({})
    {
       assert(pre.frame_no_start <= pre.frame_no_end && pre.initialized);
@@ -185,14 +195,14 @@ using namespace std;
    }
 
 
-   AckFECPacket::AckFECPacket( const uint16_t connection_id, const uint32_t frame_no, const uint16_t pkt_no, const std::string frame_ack)
-      : connection_id_( connection_id ), frame_no_( frame_no ),
+   AckFECPacket::AckFECPacket( const uint16_t connection_id, const uint32_t fec_frame_no, const uint16_t pkt_no, const std::string frame_ack)
+      : connection_id_( connection_id ), fec_frame_no_( fec_frame_no ),
          pkt_no_( pkt_no ), frame_ack_( frame_ack )
       {}
 
    AckFECPacket::AckFECPacket( const Chunk & str )
       : connection_id_( str( 0, 2 ).le16() ),
-        frame_no_( str( 2, 4 ).le32() ),
+        fec_frame_no_( str( 2, 4 ).le32() ),
         pkt_no_( str( 6, 2 ).le16() ),
         frame_ack_( str( 8 ).to_string() )
       {
@@ -201,7 +211,7 @@ using namespace std;
    std::string AckFECPacket::to_string()
    {
       return FECPacket::put_header_field( connection_id_ )
-                + FECPacket::put_header_field( frame_no_ )
+                + FECPacket::put_header_field( fec_frame_no_ )
                 + FECPacket::put_header_field( pkt_no_ )
                 + frame_ack_;
    }  

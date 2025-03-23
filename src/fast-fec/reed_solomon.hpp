@@ -137,12 +137,12 @@ class AckFECPacket
 {
 public:
   uint16_t connection_id_;
-  uint32_t frame_no_;
+  uint32_t fec_frame_no_;
   uint16_t pkt_no_;
 
   std::string frame_ack_;
 
-  AckFECPacket( const uint16_t connection_id, const uint32_t frame_no,
+  AckFECPacket( const uint16_t connection_id, const uint32_t fec_frame_no,
              const uint16_t pkt_no, const std::string frame_ack);
 
   AckFECPacket( const Chunk & str );

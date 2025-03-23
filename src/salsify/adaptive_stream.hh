@@ -75,9 +75,9 @@ class ABR {
         uint32_t frame_no;
         uint32_t fec_frame_no;
 
-        ABR(IVFReader & input, uint16_t _conenction_id) {
-            encoder = Encoder{ input.display_width(), input.display_height(),
-                                    false /* two-pass */, REALTIME_QUALITY };
+        ABR(uint16_t _conenction_id, Encoder & encoder) 
+            : encoder(move(encoder))
+        {
             connection_id = _conenction_id;
             frame_no = 0;
             for (unsigned i = 0; i < MAX_NUM_RTTS; i++) {
@@ -85,8 +85,14 @@ class ABR {
             }
         }
 
-        void add_fetch_frame(RasterHandle & raster) {
-            fetched_frames.push_back(raster);
+        void add_fetch_frame(IVFReader & reader) {
+            // TODO: Change to thread pool later???
+            thread([this, &reader]() {
+                Optional<RasterHandle> raster = reader.get_next_frame();
+                if ( raster.initialized() ) {
+                    fetched_frames.push_back(raster.get());
+                }
+            }).detach();
         }
 
         void encode_fetched_frames([[maybe_unused]] size_t target_sizes) {
@@ -161,20 +167,71 @@ class ABR {
             // Sending behaviour and add FEC
             if (encoded_output_by_rtt[0].initialized) {
                 FECPre & focus = encoded_output_by_rtt[0];
-                //assert((uint32_t)focus.total_len <= (uint32_t)cc.beliefs.min_c);
+                //assert((uint32_t)focus.total_len <= (uint32_t)cc.beliefs.min_c); 
 
-                if (focus.total_len <= (uint32_t)cc.beliefs.min_c) {
+                // Algorithm pipeline: 
+                // 1. latency deadline
+                // 2. Max allowed rate 
+                if ((int)focus.total_len <= (int)(cc.beliefs.min_c - cc.beliefs.max_q)) {
+                    if (!encoded_output_by_rtt[1].initialized) {
+                        int target_size = 2 * cc.beliefs.min_c - cc.beliefs.max_q;
+                        fec_frame_no++;
+                        FECFrame fec_frame {fec_frame_no, focus, (uint16_t)(target_size - focus.total_len)};
+                        encoded_output_by_rtt[0] =  FECPre{connection_id};
+                        int pkt_interdelay = (cc.beliefs.min_rtt) / fec_frame.total_pkts; 
+                        for (FECPacket & pkt : fec_frame.pkts) {
+                            pacer.push( pkt.to_string(), pkt_interdelay * MILLI_TO_MICRO);
+                        }
+                    } else {
+                        FECPre & next_focus = encoded_output_by_rtt[1];
+                        if ((focus.total_len + next_focus.total_len) <= (uint32_t)cc.no_loss_rate) {
+                            uint16_t extra_fec = (uint16_t)cc.no_loss_rate - (uint16_t)(focus.total_len + next_focus.total_len);
+                            fec_frame_no++;
+                            FECFrame fec_frame1 {fec_frame_no, focus, extra_fec};
+                            encoded_output_by_rtt[0] =  FECPre{connection_id};
+                            fec_frame_no++;
+                            FECFrame fec_frame2 {fec_frame_no, next_focus, extra_fec};
+                            encoded_output_by_rtt[1] =  FECPre{connection_id};
+                            int pkt_interdelay = (cc.beliefs.min_rtt) / (fec_frame1.total_pkts + fec_frame2.total_pkts); 
+                            for (FECPacket & pkt : fec_frame1.pkts) {
+                                pacer.push( pkt.to_string(), pkt_interdelay * MILLI_TO_MICRO);
+                            }
+                            for (FECPacket & pkt : fec_frame2.pkts) {
+                                pacer.push( pkt.to_string(), pkt_interdelay * MILLI_TO_MICRO);
+                            }
+                        } else {
+                            cout << "Somewhat Bad" << endl;  
+                        }
+                    }
+                } else {
+                    // can not catch up the deadline
+                    cout << "Very Bad" << endl;
+                }
+
+                /*
+                if (focus.total_len <= (uint32_t)target_size) {
                     fec_frame_no++;
-                    cout << "Checkpoint1: " << cc.beliefs.min_c << " " << focus.total_len << " " <<(uint16_t)(10 + cc.beliefs.min_c - focus.total_len) << endl;
-                    FECFrame fec_frame {fec_frame_no, focus, (uint16_t)(10 + cc.beliefs.min_c - focus.total_len)};
+                    cout << "Checkpoint1: " << cc.beliefs.min_c << " " << focus.total_len << " " <<(uint16_t)(target_size - focus.total_len) << endl;
+                    FECFrame fec_frame {fec_frame_no, focus, (uint16_t)(target_size - focus.total_len)};
                     encoded_output_by_rtt[0] =  FECPre{connection_id};
-                    int pkt_interdelay = cc.beliefs.min_rtt / fec_frame.total_pkts; 
+                    int pkt_interdelay = (cc.beliefs.min_rtt) / fec_frame.total_pkts; 
                     for (FECPacket & pkt : fec_frame.pkts) {
                         pacer.push( pkt.to_string(), pkt_interdelay * MILLI_TO_MICRO);
                     }
-                    cout << "Inter-delay is  " << pacer.ms_until_due() << endl; 
+                    cout << "Inter-delay is  " << pkt_interdelay << endl; 
                     cout << "gegeda1 " << fec_frame.pkts.size() << endl;
-                }
+                } else {
+                    fec_frame_no++;
+                    cout << "Checkpoint1: " << cc.beliefs.min_c << " " << focus.total_len << " " <<(uint16_t)(target_size - focus.total_len) << endl;
+                    FECFrame fec_frame {fec_frame_no, focus, 0};
+                    encoded_output_by_rtt[0] =  FECPre{connection_id};
+                    int pkt_interdelay = (cc.beliefs.min_rtt) / fec_frame.total_pkts; 
+                    for (FECPacket & pkt : fec_frame.pkts) {
+                        pacer.push( pkt.to_string(), pkt_interdelay * MILLI_TO_MICRO);
+                    }
+                    cout << "Inter-delay is  " << pkt_interdelay << endl; 
+                    cout << "gegeda1 " << fec_frame.pkts.size() << endl;
+                } */
             }
         }
 };

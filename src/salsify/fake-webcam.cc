@@ -147,7 +147,6 @@ int main( int argc, char *argv[] )
   std::mutex second_encoder_lock;
 
   /* counter variable */
-  uint32_t frame_no = 0;
   [[maybe_unused]] uint32_t real_frame_no = 0;
 
   SeqNum pkt_no = 0;
@@ -158,13 +157,21 @@ int main( int argc, char *argv[] )
   unordered_map<SeqNum, system_clock::time_point> pkt_sent_time;
 
   //SlowConvManual congctrl("./log", 1);
+  Encoder encoder = Encoder{ input.display_width(), input.display_height(),
+    false /* two-pass */, REALTIME_QUALITY };
+
+  // Skip the first small header file
+  Optional<RasterHandle> raster = input.get_next_frame();
+  raster = input.get_next_frame();
+  [[maybe_unused]] std::vector<uint8_t> output = encoder.encode_with_target_size( raster.get(), 7000 );
+
+
   CongCtrl cc; 
-  ABR abr {input, connection_id};
+  ABR abr {connection_id, encoder};
 
   [[maybe_unused]] auto start = chrono::system_clock::now();
 
-  // Skip the first small header file
-  const Optional<RasterHandle> raster = input.get_next_frame();
+
 
   poller.add_action( Poller::Action( socket, Direction::Out, [&]() {
     assert( pacer.ms_until_due() == 0 );
@@ -217,13 +224,16 @@ int main( int argc, char *argv[] )
       encode_pipe.second.read();
       // Simulate 30 fps
       fetch_start = system_clock::now();
-      Optional<RasterHandle> raster = input.get_next_frame();
-      if ( not raster.initialized() ) {
-        return { ResultType::Exit, EXIT_FAILURE };
-      }
-      ++frame_no;
-      abr.add_fetch_frame(raster.get());
+      //Optional<RasterHandle> raster = input.get_next_frame();
+      //if ( not raster.initialized() ) {
+      //  return { ResultType::Exit, EXIT_FAILURE };
+      //}
+      abr.add_fetch_frame(input);
       encode_pipe.first.write( "1" );
+
+
+      //std::chrono::duration<double, std::ratio<1,1000>> diff = (system_clock::now() - fetch_start);
+      //cout << "This fetch takes " << diff.count() << endl; 
 
       return ResultType::Continue;
     }, [&]() { 
@@ -233,19 +243,29 @@ int main( int argc, char *argv[] )
   );
 
     // only send new frames after min_rtt
+  int min_rtt = cc.beliefs.min_rtt;  
   poller.add_action( Poller::Action( update_pipe.second, Direction::In, [&]() {
       update_pipe.second.read();
       // update history and state of cong_ctrl 
+      auto before_update = system_clock::now();
       cc.updateHistory();
       cc.updateBeliefBound();
+      auto after_update = system_clock::now();
       abr.add_fec(pacer, cc);
+      auto after_fec = system_clock::now();
       abr.encode_fetched_frames(cc.beliefs.min_c * Packet::MAXIMUM_PAYLOAD);
       last_sent = system_clock::now();
+      std::chrono::duration<double, std::ratio<1,1000>> diff1 = (last_sent - after_fec);
+      std::chrono::duration<double, std::ratio<1,1000>> diff2 = (after_update - before_update);
+      std::chrono::duration<double, std::ratio<1,1000>> diff3 = (after_fec - after_update);
+      cout << "This update takes " << diff2.count() << endl; 
+      cout << "This fec takes " << diff3.count() << endl; 
+      cout << "This scheduling takes " << diff1.count() << endl; 
       update_pipe.first.write( "1" );
       return ResultType::Continue;
     }, [&]() { 
       std::chrono::duration<double, std::ratio<1,1000>> diff = (system_clock::now() - last_sent); // in millis
-      return diff.count() >= (100); 
+      return diff.count() >= (min_rtt); 
   } ) );
 
   // Start!!!

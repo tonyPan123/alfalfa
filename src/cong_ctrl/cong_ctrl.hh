@@ -52,7 +52,7 @@ class CongCtrl
     public:
         // Important constant used in simulation
         static constexpr int HISTORY_SIZE = 7;
-        static constexpr Time MAX_DELAY = 1000; // 1000ms initially
+        static constexpr Time MAX_DELAY = 100; // 1000ms initially
         static constexpr SegsRate MIN_BANDWIDTH = 5; 
         static constexpr SegsRate MAX_BANDWIDTH = 1000;
         static constexpr SeqNum MIN_BUFFER = 5;
@@ -74,6 +74,14 @@ class CongCtrl
 		    SeqNum creation_cum_delivered_segs;
             SeqNum creation_cum_loss_segs;
 		    std::vector<Loss> loss;
+
+            void print_out() {
+                cout << "Sent: " << creation_cum_sent_segs << endl;
+                cout << "Ack: " << creation_cum_delivered_segs << endl;
+                for (int i = 0; i < (int)loss.size();i++) {
+                    cout << "Time ago: " << loss[i].ago << " lost" << loss[i].creation_cum_lost_segs << endl;
+                }
+            }
 
         };
 
@@ -112,10 +120,14 @@ class CongCtrl
 	    SeqNum cum_segs_sent;
 	    SeqNum cum_segs_delivered;
 	    SeqNum cum_segs_lost;
-        std::vector<Loss> cum_segs_loss_vector;
+        vector<Loss> cum_segs_loss_vector;
         Step focus;
 
         SegsRate no_loss_rate;
+
+        vector<SeqNum> buffered_ack;
+        vector<Time> buffered_rtt;
+
 
     public:
         CongCtrl() : 
@@ -126,7 +138,10 @@ class CongCtrl
             cum_segs_lost(0),
             cum_segs_loss_vector({{0, 0}}),
             focus(-1), 
-            no_loss_rate(0) {
+            no_loss_rate(0), 
+            buffered_ack({}),
+            buffered_rtt({})
+            {
                 for (int i = 0; i < (HISTORY_SIZE); i++) {
                     Loss loss = {0, 0};
                     std::vector<Loss> losses = {loss};
@@ -142,6 +157,10 @@ class CongCtrl
         void onACK(SeqNum ack, Time rtt);
 
         SeqNum get_cca_action();
+
+        SeqNum get_max_allowed_ack() {
+            return history[HISTORY_SIZE - 1].creation_cum_sent_segs;
+        }
 
         TimeDelta get_action_intertime() { return beliefs.min_rtt; } // milli seconds
 
@@ -163,10 +182,20 @@ class CongCtrl
                 assert(focus == 0);
                 focus = -1;
             }
+
+            for (int i = 0; i < (int)buffered_ack.size(); i++) {
+                onACK(buffered_ack[i], buffered_rtt[i]);
+            }
+            buffered_ack = {};
+            buffered_rtt = {};
         }
 
         void updateBeliefBound() {
             // Prepare for the argument
+            //for (auto & history_entry : history) {
+            //    history_entry.print_out();
+            //}
+
             ExternalHistory historys[HISTORY_SIZE];
             ExternalLoss lossess[HISTORY_SIZE][HISTORY_SIZE];
             for (int i = 0; i < HISTORY_SIZE; i++) {
@@ -184,8 +213,8 @@ class CongCtrl
             // Query the rust static library
             ExternalBeliefBound bb = compute_belief_bounds_c(&historys[0], HISTORY_SIZE);
             std::cout << "New BB is: " <<" "<< bb.min_c <<  " " << bb.max_q << std::endl;
-            //std::cout << "New BB is: " <<" "<< bb.min_b <<  " " << bb.max_b << std::endl;
-            std::cout << "New max allowed rate is: " << bb.rate << std::endl;
+            std::cout << "New BB is: " <<" "<< bb.max_c <<  " " << bb.min_b << std::endl;
+            //std::cout << "New max allowed rate is: " << bb.rate << std::endl;
             // Update the belief bound
             beliefs.min_c = bb.min_c;
             beliefs.max_c = bb.max_c;
