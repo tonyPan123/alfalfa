@@ -52,7 +52,7 @@ class CongCtrl
     public:
         // Important constant used in simulation
         static constexpr int HISTORY_SIZE = 7;
-        static constexpr Time MAX_DELAY = 100; // 1000ms initially
+        static constexpr Time MAX_DELAY = 50; // 1000ms initially
         static constexpr SegsRate MIN_BANDWIDTH = 5; 
         static constexpr SegsRate MAX_BANDWIDTH = 1000;
         static constexpr SeqNum MIN_BUFFER = 5;
@@ -212,8 +212,9 @@ class CongCtrl
 
             // Query the rust static library
             ExternalBeliefBound bb = compute_belief_bounds_c(&historys[0], HISTORY_SIZE);
-            std::cout << "New BB is: " <<" "<< bb.min_c <<  " " << bb.max_q << std::endl;
-            std::cout << "New BB is: " <<" "<< bb.max_c <<  " " << bb.min_b << std::endl;
+            std::cout << "New C is: " <<" "<< bb.min_c <<  " " << bb.max_c << std::endl;
+            std::cout << "New B is: " <<" "<< bb.min_b <<  " " << bb.max_b << std::endl;
+            std::cout << "New B is: " <<" "<< bb.min_q <<  " " << bb.max_q << std::endl;
             //std::cout << "New max allowed rate is: " << bb.rate << std::endl;
             // Update the belief bound
             beliefs.min_c = bb.min_c;

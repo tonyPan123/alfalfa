@@ -209,7 +209,7 @@ int main( int argc, char *argv[] )
       std::chrono::duration<double, std::ratio<1,1000>> diff = (system_clock::now() - pkt_sent_time[pkt_num]); // in millis
       cc.onACK(pkt_num, diff.count());
       cout << "Get Ack!" << ack.fec_frame_no_ <<" "<< ack.pkt_no_ << " " << diff.count() << endl;
-      if (ack.fec_frame_no_ == 24 && ack.pkt_no_ == 100) {
+      if (ack.fec_frame_no_ == 22 && ack.pkt_no_ == 10) {
         std::chrono::duration<double, std::ratio<1,1000>> diff = (system_clock::now() - start);
         cout << "Finish in " << diff.count() <<"ms" << endl;
       }

@@ -64,7 +64,7 @@ class ABR {
         // Encoders should be parallel (>= 2)
         Encoder encoder{ 1280, 720, false, REALTIME_QUALITY };
         // Can only consider 2 RTTs' frames for each abr action  
-        static constexpr unsigned MAX_NUM_RTTS = 2;
+        static constexpr unsigned MAX_NUM_RTTS = 3;
         FECPre encoded_output_by_rtt[MAX_NUM_RTTS];
 
         /* where we keep the outputs of parallel encoding jobs */
@@ -165,73 +165,71 @@ class ABR {
             }
     
             // Sending behaviour and add FEC
+            if (cc.beliefs.max_q == 0) {
             if (encoded_output_by_rtt[0].initialized) {
-                FECPre & focus = encoded_output_by_rtt[0];
-                //assert((uint32_t)focus.total_len <= (uint32_t)cc.beliefs.min_c); 
+                if (encoded_output_by_rtt[1].initialized) {
+                    cout << "Per-frame Encoding" << endl;
+                    // Best effort for latency and probing
+                    // Non-determinsim at the encoder can make the normal condition check fail
+                    int64_t lower_bound = (int64_t)encoded_output_by_rtt[0].total_len + (int64_t)encoded_output_by_rtt[1].total_len;
+                    int64_t upper_bound = (int64_t)3 * cc.beliefs.min_c;
+                    if (encoded_output_by_rtt[2].initialized) {
+                        upper_bound -= (int64_t)encoded_output_by_rtt[2].total_len;
+                    }
+                    int64_t fec_loss = (int64_t)cc.no_loss_rate - lower_bound;
+                    int64_t fec_latency = ((upper_bound - lower_bound) / 2);
+                    int64_t extra_fec = max(min(fec_loss, fec_latency), (int64_t)0);
+                    if (lower_bound >= 256) {
+                        extra_fec = 0;
+                    }
+                    cout << "First Frame: " << encoded_output_by_rtt[0].total_len << " Second Frame: " << encoded_output_by_rtt[1].total_len << " Third Frame: " << encoded_output_by_rtt[2].total_len << endl;
+                    cout << "Extra Fec: " << extra_fec << endl;
+                    cout << cc.no_loss_rate << endl;
+                    fec_frame_no++;
+                    FECFrame fec_frame1 {fec_frame_no, encoded_output_by_rtt[0], (uint16_t)extra_fec};
+                    encoded_output_by_rtt[0] =  FECPre{connection_id};
+                    fec_frame_no++;
+                    FECFrame fec_frame2 {fec_frame_no, encoded_output_by_rtt[1], (uint16_t)extra_fec};
+                    encoded_output_by_rtt[1] =  FECPre{connection_id};
+                    int pkt_interdelay = (cc.beliefs.min_rtt) / (fec_frame1.total_pkts + fec_frame2.total_pkts); 
+                    for (FECPacket & pkt : fec_frame1.pkts) {
+                        pacer.push( pkt.to_string(), pkt_interdelay * MILLI_TO_MICRO);
+                    }
+                    for (FECPacket & pkt : fec_frame2.pkts) {
+                        pacer.push( pkt.to_string(), pkt_interdelay * MILLI_TO_MICRO);
+                    }
 
-                // Algorithm pipeline: 
-                // 1. latency deadline
-                // 2. Max allowed rate 
-                if ((int)focus.total_len <= (int)(cc.beliefs.min_c - cc.beliefs.max_q)) {
-                    if (!encoded_output_by_rtt[1].initialized) {
-                        int target_size = 2 * cc.beliefs.min_c - cc.beliefs.max_q;
-                        fec_frame_no++;
-                        FECFrame fec_frame {fec_frame_no, focus, (uint16_t)(target_size - focus.total_len)};
-                        encoded_output_by_rtt[0] =  FECPre{connection_id};
-                        int pkt_interdelay = (cc.beliefs.min_rtt) / fec_frame.total_pkts; 
-                        for (FECPacket & pkt : fec_frame.pkts) {
-                            pacer.push( pkt.to_string(), pkt_interdelay * MILLI_TO_MICRO);
-                        }
-                    } else {
-                        FECPre & next_focus = encoded_output_by_rtt[1];
-                        if ((focus.total_len + next_focus.total_len) <= (uint32_t)cc.no_loss_rate) {
-                            uint16_t extra_fec = (uint16_t)cc.no_loss_rate - (uint16_t)(focus.total_len + next_focus.total_len);
+                } else {
+                    //throw std::runtime_error("Not Implemented 3\n");
+                }
+            } else {
+                if (encoded_output_by_rtt[1].initialized) {
+                    if (encoded_output_by_rtt[2].initialized) {
+                        if ((encoded_output_by_rtt[1].total_len + encoded_output_by_rtt[2].total_len) <= (uint32_t)cc.no_loss_rate) {
+                            cout << "Multi-frame Encoding" << endl;
+                            FECPre & sum = encoded_output_by_rtt[1];
+                            sum.merge(encoded_output_by_rtt[2]);
+                            uint16_t extra_fec = min((uint16_t)(3 * cc.beliefs.min_c - sum.total_len), (uint16_t)(255 - sum.total_len));
+                            cout << "Total Frame: " << sum.total_len << endl;
+                            cout << "Extra Fec: " << extra_fec << endl;
                             fec_frame_no++;
-                            FECFrame fec_frame1 {fec_frame_no, focus, extra_fec};
-                            encoded_output_by_rtt[0] =  FECPre{connection_id};
-                            fec_frame_no++;
-                            FECFrame fec_frame2 {fec_frame_no, next_focus, extra_fec};
+                            FECFrame fec_frame {fec_frame_no, sum, extra_fec};
                             encoded_output_by_rtt[1] =  FECPre{connection_id};
-                            int pkt_interdelay = (cc.beliefs.min_rtt) / (fec_frame1.total_pkts + fec_frame2.total_pkts); 
-                            for (FECPacket & pkt : fec_frame1.pkts) {
-                                pacer.push( pkt.to_string(), pkt_interdelay * MILLI_TO_MICRO);
-                            }
-                            for (FECPacket & pkt : fec_frame2.pkts) {
+                            encoded_output_by_rtt[2] =  FECPre{connection_id};
+                            int pkt_interdelay = (cc.beliefs.min_rtt) / (fec_frame.total_pkts); 
+                            for (FECPacket & pkt : fec_frame.pkts) {
                                 pacer.push( pkt.to_string(), pkt_interdelay * MILLI_TO_MICRO);
                             }
                         } else {
-                            cout << "Somewhat Bad" << endl;  
+                            //throw std::runtime_error("Not Implemented 4\n");
                         }
+                    } else {
+                        //throw std::runtime_error("Not Implemented 5\n");
                     }
                 } else {
-                    // can not catch up the deadline
-                    cout << "Very Bad" << endl;
-                }
 
-                /*
-                if (focus.total_len <= (uint32_t)target_size) {
-                    fec_frame_no++;
-                    cout << "Checkpoint1: " << cc.beliefs.min_c << " " << focus.total_len << " " <<(uint16_t)(target_size - focus.total_len) << endl;
-                    FECFrame fec_frame {fec_frame_no, focus, (uint16_t)(target_size - focus.total_len)};
-                    encoded_output_by_rtt[0] =  FECPre{connection_id};
-                    int pkt_interdelay = (cc.beliefs.min_rtt) / fec_frame.total_pkts; 
-                    for (FECPacket & pkt : fec_frame.pkts) {
-                        pacer.push( pkt.to_string(), pkt_interdelay * MILLI_TO_MICRO);
-                    }
-                    cout << "Inter-delay is  " << pkt_interdelay << endl; 
-                    cout << "gegeda1 " << fec_frame.pkts.size() << endl;
-                } else {
-                    fec_frame_no++;
-                    cout << "Checkpoint1: " << cc.beliefs.min_c << " " << focus.total_len << " " <<(uint16_t)(target_size - focus.total_len) << endl;
-                    FECFrame fec_frame {fec_frame_no, focus, 0};
-                    encoded_output_by_rtt[0] =  FECPre{connection_id};
-                    int pkt_interdelay = (cc.beliefs.min_rtt) / fec_frame.total_pkts; 
-                    for (FECPacket & pkt : fec_frame.pkts) {
-                        pacer.push( pkt.to_string(), pkt_interdelay * MILLI_TO_MICRO);
-                    }
-                    cout << "Inter-delay is  " << pkt_interdelay << endl; 
-                    cout << "gegeda1 " << fec_frame.pkts.size() << endl;
-                } */
+                }
+            }
             }
         }
 };
