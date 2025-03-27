@@ -121,7 +121,7 @@ void enqueue_frame( FramePlayer & player, const Chunk & frame )
   }
 
   const Optional<RasterHandle> raster = player.decode( frame );
-
+  /*
   async( launch::async,
     [&raster]()
     {
@@ -131,7 +131,7 @@ void enqueue_frame( FramePlayer & player, const Chunk & frame )
         cv.notify_all();
       }
     }
-  );
+  );*/
 }
 
 int main( int argc, char *argv[] )
@@ -142,7 +142,7 @@ int main( int argc, char *argv[] )
   }
 
   /* fullscreen player */
-  bool fullscreen = false;
+  [[maybe_unused]]bool fullscreen = false;
   bool verbose = false;
 
   const option command_line_options[] = {
@@ -192,7 +192,7 @@ int main( int argc, char *argv[] )
   player.set_error_concealment( true );
 
   /* construct display thread */
-  thread( [&player, fullscreen]() { display_task( player.example_raster(), fullscreen ); } ).detach();
+  //thread( [&player, fullscreen]() { display_task( player.example_raster(), fullscreen ); } ).detach();
 
   /* frame no => FragmentedFrame; used when receiving packets out of order */
   unordered_map<size_t, FragmentedFrame> fragmented_frames;

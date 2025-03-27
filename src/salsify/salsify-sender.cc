@@ -40,6 +40,7 @@
 #include <unordered_map>
 #include <iomanip>
 #include <cmath>
+#include <queue>
 
 #include "exception.hh"
 #include "finally.hh"
@@ -53,6 +54,8 @@
 #include "camera.hh"
 #include "pacer.hh"
 #include "procinfo.hh"
+#include "ivf_reader.hh"
+#include "yuv4mpeg.hh"
 
 using namespace std;
 using namespace std::chrono;
@@ -204,13 +207,15 @@ int main( int argc, char *argv[] )
   size_t update_rate __attribute__((unused)) = 1;
   OperationMode operation_mode = OperationMode::S2;
   bool log_mem_usage = false;
+  string input_file = "";
 
   const option command_line_options[] = {
     { "mode",          required_argument, nullptr, 'm' },
     { "device",        required_argument, nullptr, 'd' },
     { "pixfmt",        required_argument, nullptr, 'p' },
-    { "update-rate",   required_argument, nullptr, 'u' },
-    { "log-mem-usage", no_argument,       nullptr, 'M' },
+    //{ "update-rate",   required_argument, nullptr, 'u' },
+    //{ "log-mem-usage", no_argument,       nullptr, 'M' },
+    { "file", required_argument,       nullptr, 'f' },
     { 0, 0, 0, 0 }
   };
 
@@ -241,6 +246,10 @@ int main( int argc, char *argv[] )
 
     case 'M':
       log_mem_usage = true;
+      break;
+
+    case 'f': 
+      input_file = optarg;
       break;
 
     default:
@@ -281,7 +290,15 @@ int main( int argc, char *argv[] )
   }
 
   /* camera device */
-  Camera camera { 1280, 720, PIXEL_FORMAT_STRS.at( pixel_format ), camera_device };
+  //Camera camera { 1280, 720, PIXEL_FORMAT_STRS.at( pixel_format ), camera_device };
+  YUV4MPEGReader camera {input_file};
+  //camera.get_next_frame();
+  //camera.get_next_frame();
+  //auto header = camera.get_next_frame();
+  //auto file_header = YUV4MPEGHeader( header.get() );
+  //file_header.fps_numerator = frames_per_second;
+  //file_header.fps_denominator = 1;
+  //stdout.write( file_header.to_string() );
 
   /* construct the encoder */
   Encoder base_encoder { camera.display_width(), camera.display_height(),
@@ -338,12 +355,33 @@ int main( int argc, char *argv[] )
 
   Poller poller;
 
+  queue<Optional<RasterHandle>> fetched_frames;
+  queue<chrono::milliseconds> encoding_times;
+
+  thread([&fetched_frames, &camera, &encoding_times]() {
+    while (true) {
+      Optional<RasterHandle> raster = camera.get_next_frame();
+        if ( raster.initialized() ) {
+          fetched_frames.push(raster);
+          encoding_times.push(duration_cast<milliseconds>( system_clock::now().time_since_epoch() ));
+        } else {
+          break;
+        }
+    }
+  }).detach(); 
+  // Make sure there is at least one frame
+  //auto fetch_start = system_clock::now(); 
+
   /* fetch frames from webcam */
   poller.add_action( Poller::Action( encode_start_pipe.second, Direction::In,
     [&]() -> Result {
       encode_start_pipe.second.read();
 
-      last_raster = camera.get_next_frame();
+      //last_raster = camera.get_next_frame();
+      encoding_times.push(duration_cast<milliseconds>( system_clock::now().time_since_epoch() ));
+      last_raster = fetched_frames.front();
+      fetched_frames.pop();
+      //fetch_start = system_clock::now(); 
 
       if ( not last_raster.initialized() ) {
         return { ResultType::Exit, EXIT_FAILURE };
@@ -518,6 +556,10 @@ int main( int argc, char *argv[] )
       ).detach();
 
       return ResultType::Continue;
+    } , [&]() { 
+      //std::chrono::duration<double, std::ratio<1,1000>> diff = (system_clock::now() - fetch_start); // in millis
+      //return diff.count() >= (33) && fetched_frames.size() > 0; 
+      return fetched_frames.size() > 0;
     } )
   );
 
@@ -581,6 +623,7 @@ int main( int argc, char *argv[] )
         if ( best_output_index == numeric_limits<size_t>::max() ) {
           if ( skipped_count < MAX_SKIPPED or good_outputs.back().job_name != "fail-small" ) {
             /* skip frame */
+            fetched_frames.pop();
             cerr << "["
                  << duration_cast<milliseconds>( system_clock::now().time_since_epoch() ).count()
                  << "] "
@@ -620,7 +663,10 @@ int main( int argc, char *argv[] )
 
       last_sent = system_clock::now();
 
-      /* cerr << "["
+      auto encoding_time = encoding_times.front();
+      encoding_times.pop();
+
+      cout << "["
            << duration_cast<milliseconds>( last_sent.time_since_epoch() ).count()
            << "] "
            << "Frame " << frame_no << ": " << output.job_name
@@ -629,7 +675,8 @@ int main( int argc, char *argv[] )
            << avg_encoding_time.int_value()/1000 << " ms, ssim="
            << output.encoder.stats().ssim.get_or( -1.0 )
            << ") {" << output.source_minihash << " -> " << target_minihash << "}"
-           << " intersend_delay = " << inter_send_delay << " us"; */
+           << " intersend_delay = " << inter_send_delay << " us" 
+           << " encoding time = " << encoding_time.count() << endl; 
 
       if ( log_mem_usage and next_mem_usage_report < last_sent ) {
         cerr << " <mem = " << procinfo::memory_usage() << ">";
