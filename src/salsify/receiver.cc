@@ -77,15 +77,6 @@ condition_variable cv;
 //int main( int argc, char *argv[] )
 int main()
 {
-  ReedSolomon rs;
-  auto checkpt1 = system_clock::now();
-  rs.reed_test();
-  auto checkpt2 = system_clock::now();
-  std::chrono::duration<double, std::ratio<1,1000>> diffec = (checkpt2 - checkpt1); 
-  cout << "FEC Encoding time is " << diffec.count()  << endl;
-  /* check the command-line arguments */
-
-
   /* choose a random connection_id */
   const uint16_t connection_id = 1337; // ezrand();
   cerr << "Connection ID: " << connection_id << endl;
@@ -112,6 +103,10 @@ int main()
   /* memory usage logs */
   //system_clock::time_point next_mem_usage_report = system_clock::now();
 
+  //auto start = chrono::system_clock::now();
+
+  unordered_map<uint32_t, FECFrame> frames;
+
   Poller poller;
   poller.add_action( Poller::Action( socket, Direction::In,
     [&]()
@@ -120,13 +115,18 @@ int main()
       const auto new_fragment = socket.recv();
       //cout << new_fragment.source_address.to_string() << " " << socket.local_address().to_string()  << endl;
       /* parse into Packet */
-      const FECPacket fecpacket { new_fragment.payload };
-      cout << "Receive:" << fecpacket.fec_frame_no_ << " " << fecpacket.pkt_no_ << endl;
-
+      FECPacket fecpacket { new_fragment.payload };
+      //std::chrono::duration<double, std::ratio<1,1000>> diff = (system_clock::now() - start);
+      //cout << "Receive:" << fecpacket.fec_frame_no_ << " " << fecpacket.pkt_no_  << " " << diff.count() << endl;
+      if (!frames[fecpacket.fec_frame_no_].is_valid) {
+        frames[fecpacket.fec_frame_no_] = FECFrame {fecpacket};
+      } else {
+        frames[fecpacket.fec_frame_no_].addPacket(fecpacket);
+      }
       AckFECPacket ack = AckFECPacket (connection_id, fecpacket.fec_frame_no_, fecpacket.pkt_no_, "");
       ack.sendto( socket, new_fragment.source_address );   
 
-      std::this_thread::sleep_for(std::chrono::milliseconds(1));
+      //std::this_thread::sleep_for(std::chrono::milliseconds(1));
 
       return ResultType::Continue;
     },
@@ -135,7 +135,7 @@ int main()
 
   /* handle events */
   while ( true ) {
-    const auto poll_result = poller.poll( -1 );
+    const auto poll_result = poller.poll( 0 );
     if ( poll_result.result == Poller::Result::Type::Exit ) {
       return poll_result.exit_status;
     }

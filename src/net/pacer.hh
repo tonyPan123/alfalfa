@@ -59,6 +59,20 @@ public:
     return millis;
   }
 
+  int micro_until_due() const
+  {
+    if ( queue_.empty() ) {
+      return 1000; /* could be infinite, but if there's a bug I'd rather we find it in the first second */
+    }
+
+    int micros = std::chrono::duration_cast<std::chrono::microseconds>( queue_.front().when - std::chrono::system_clock::now() ).count();
+    if ( micros < 0 ) {
+      micros = 0;
+    }
+
+    return micros;
+  }
+
   bool empty() const { return queue_.empty(); }
   void push( const std::string & payload, const int delay_microseconds )
   {

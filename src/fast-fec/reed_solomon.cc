@@ -1,5 +1,8 @@
-#include "reed_solomon.hpp"
+#include <chrono>
+#include <queue>
 
+#include "reed_solomon.hpp"
+#include "packet.hh"
 
 using namespace std;
 
@@ -13,6 +16,7 @@ using namespace std;
                         const uint32_t frame_no_end,
                         const unordered_map<uint32_t, uint16_t> frame_no_to_length,
                         const uint16_t pkt_no_,
+                        const uint32_t timestamp, 
                         const std::string payload_)
       : connection_id_(connection_id_),
         fec_frame_no_(fec_frame_no_),
@@ -22,7 +26,9 @@ using namespace std;
         frame_no_end(frame_no_end),
         frame_no_to_length(frame_no_to_length),
         pkt_no_(pkt_no_),
-        payload_(payload_)
+        timestamp(timestamp),
+        payload_(payload_), 
+        is_valid(true)
       {}
    
    FECPacket::FECPacket( const Chunk & str )
@@ -32,7 +38,8 @@ using namespace std;
       pkts_needed_for_decoding( str( 8, 2 ).le16() ),
       frame_no_start( str( 10, 4 ).le32() ),
       frame_no_end( str( 14, 4 ).le32() ),
-      frame_no_to_length( {} )
+      frame_no_to_length( {} ), 
+      is_valid(true)
    {
       int start = 18;
       for (uint32_t frame_no = frame_no_start; frame_no <= frame_no_end; frame_no++) {
@@ -42,8 +49,13 @@ using namespace std;
       }
       pkt_no_ = str( start, 2 ).le16();
       start += 2;
+      timestamp = str( start, 4 ).le32();
+      start += 4;
       payload_ = str( start ).to_string();
    }
+
+   FECPacket::FECPacket()
+      : is_valid(false) {}
    
    std::string FECPacket::put_header_field( const uint16_t n )
    {
@@ -76,8 +88,63 @@ using namespace std;
          + put_header_field( frame_no_end )
          + frame_no_to_length_str 
          + put_header_field( pkt_no_ )
+         + put_header_field( timestamp )
          + payload_;
-      return "TODO";
+   }
+
+   FECFrame::FECFrame(FECPacket & pkt) 
+      : connection_id_(pkt.connection_id_), 
+      fec_frame_no(pkt.fec_frame_no_), 
+      total_pkts(pkt.total_pkts),
+      pkts_needed_for_decoding(pkt.pkts_needed_for_decoding),
+      frame_no_start(pkt.frame_no_start),
+      frame_no_end(pkt.frame_no_end),
+      is_valid(true) {
+         for (uint32_t frame_no = frame_no_start; frame_no <= frame_no_end; frame_no++) {
+            frame_no_to_length[frame_no] = pkt.frame_no_to_length[frame_no];
+            std::vector<FECPacket> v(frame_no_to_length[frame_no]);  
+            frame_no_to_received_data[frame_no] = v;
+         }
+         fecs = vector<FECPacket>(total_pkts - pkts_needed_for_decoding);
+         addPacket(pkt);
+   }
+
+   void FECFrame::addPacket(FECPacket &pkt) {
+      int start = 1;
+      // Data packet
+      for (uint32_t frame_no = frame_no_start; frame_no <= frame_no_end; frame_no++) {
+         int end = start + frame_no_to_length[frame_no] - 1;
+         if (start <= pkt.pkt_no_ && pkt.pkt_no_ <= end ) {
+            frame_no_to_received_data[frame_no][pkt.pkt_no_ - start] = pkt;
+            checkComplete(frame_no);
+            break;
+         }
+         start = end + 1;
+      }
+      // FEC packet
+      if (pkt.pkt_no_ > pkts_needed_for_decoding) {
+         fecs[pkt.pkt_no_ - pkts_needed_for_decoding - 1] = pkt;
+      }
+   }
+
+   void FECFrame::checkComplete(uint32_t frame_no) {
+      auto & pkts = frame_no_to_received_data[frame_no];
+      for (auto pkt : pkts) {
+         if (!pkt.is_valid) {
+            return;
+         }
+      }
+      // TODO: Check for extra-padding of the last packet during FEC
+      FragmentedFrame ff {connection_id_, Packet{pkts[0].payload_} };
+      for (int i = 1; i < (int)pkts.size(); i++) {
+         ff.add_packet(Packet{pkts[i].payload_});
+      }
+      // TODO: Decoding process
+
+
+      auto now = chrono::steady_clock::now();
+      uint32_t ms = chrono::duration_cast<std::chrono::milliseconds>(now.time_since_epoch()).count();
+      cout << "Frame " << ff.frame_no() << " 's latency is " << ms  << endl;
    }
 
 
@@ -87,15 +154,18 @@ using namespace std;
         frame_no_start(pre.frame_no_start),
         frame_no_end(pre.frame_no_end), 
         frame_no_to_length(), 
-        pkts({})
+        pkts({}), 
+        is_valid(true)
    {
       assert(pre.frame_no_start <= pre.frame_no_end && pre.initialized);
       vector<Packet> all_packets = {};
+      queue<uint32_t> timestamps = {};
       for (uint32_t frame_no = pre.frame_no_start; frame_no <= pre.frame_no_end; frame_no++) {
          vector<Packet> & packets = pre.frame_no_to_pkts[frame_no];
          frame_no_to_length[frame_no] = packets.size();
          for (Packet & packet : packets) {
             all_packets.push_back(packet);
+            timestamps.push(pre.frame_no_to_timestamps[frame_no]);
          }
          //all_packets.insert(packets.end(), packets.begin(), packets.end());  
       }
@@ -108,7 +178,8 @@ using namespace std;
       uint16_t pkt_no = 1;
       for ( const auto & pkt : all_packets ) {
          // Do we need padding here???
-         pkts.push_back(FECPacket {connection_id_, fec_frame_no, total_pkts, pkts_needed_for_decoding, frame_no_start, frame_no_end, frame_no_to_length, pkt_no, pkt.to_string()});
+         pkts.push_back(FECPacket {connection_id_, fec_frame_no, total_pkts, pkts_needed_for_decoding, frame_no_start, frame_no_end, frame_no_to_length, pkt_no, timestamps.front(), pkt.to_string()});
+         timestamps.pop();
          pkt_no++;
       }
 
@@ -134,7 +205,7 @@ using namespace std;
 
       for (int i = 0; i < fec_length; i++) {
          std::string parity(coding[i], fec_payload_len - 1);
-         pkts.push_back(FECPacket {connection_id_, fec_frame_no, total_pkts, pkts_needed_for_decoding, frame_no_start, frame_no_end, frame_no_to_length, pkt_no, parity});
+         pkts.push_back(FECPacket {connection_id_, fec_frame_no, total_pkts, pkts_needed_for_decoding, frame_no_start, frame_no_end, frame_no_to_length, pkt_no, 0, parity});
          pkt_no++;
       }
 
@@ -148,6 +219,40 @@ using namespace std;
       }
       free(coding);
       assert(pkts.size() == total_pkts);
+   }
+
+   void FECFrame::recover_loss() {
+      size_t fec_payload_len = 1424 + 1;
+      uint16_t fec_length = total_pkts - pkts_needed_for_decoding;
+      char **data, **coding;
+      int *erasures = (int *)malloc(sizeof(int)*(total_pkts));
+
+      data = talloc(char *, pkts_needed_for_decoding);
+      for (int i = 0; i < pkts_needed_for_decoding; i++) {
+         data[i] = talloc(char, fec_payload_len);
+         //strcpy (data[i], all_packets[i].to_string().c_str());
+      }
+
+      int index = 0;
+      for (int i = frame_no_start; i <= (int)frame_no_end; i++) {
+         for (int j = 0; j <= frame_no_to_length[i]; j++) {
+
+
+            index++;
+         }
+
+
+      }
+
+      coding = talloc(char *, fec_length);
+      for (int i = 0; i < fec_length; i++) {
+        coding[i] = talloc(char, fec_payload_len);
+      }
+      // k + m <= 2^w
+      int *matrix;
+      matrix = reed_sol_vandermonde_coding_matrix(pkts_needed_for_decoding, fec_length, 8);
+      jerasure_matrix_decode(pkts_needed_for_decoding, fec_length, 8, matrix, 1, erasures, data, coding, fec_payload_len);
+
    }
 
 

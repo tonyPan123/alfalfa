@@ -108,9 +108,9 @@ int main( int argc, char *argv[] )
   }
 
   /* open the YUV4MPEG input */
-  //YUV4MPEGReader input { argv[ 1 ] };
+  YUV4MPEGReader input { argv[ 1 ] };
 
-  IVFReader input {argv[1]};
+  //IVFReader input {argv[1]};
 
   /* parse the # of frames per second of playback */
   //unsigned int frames_per_second = paranoid::stoul( argv[ 2 ] );
@@ -121,13 +121,6 @@ int main( int argc, char *argv[] )
   //const auto interval_between_frames = chrono::microseconds( int( 1.0e6 / frames_per_second ) );
 
   //auto next_frame_is_due = chrono::system_clock::now();
-
-  // Test encoder
-  Encoder first_encoder { input.display_width(), input.display_height(),
-                         false /* two-pass */, REALTIME_QUALITY };
-
-  Encoder second_encoder { input.display_width(), input.display_height(),
-                         false /* two-pass */, REALTIME_QUALITY };
 
   auto encode_pipe = UnixDomainSocket::make_pair();
   auto update_pipe = UnixDomainSocket::make_pair();
@@ -161,21 +154,18 @@ int main( int argc, char *argv[] )
     false /* two-pass */, REALTIME_QUALITY };
 
   // Skip the first small header file
-  Optional<RasterHandle> raster = input.get_next_frame();
-  raster = input.get_next_frame();
-  [[maybe_unused]] std::vector<uint8_t> output = encoder.encode_with_target_size( raster.get(), 7000 );
-
+  //Optional<RasterHandle> raster = input.get_next_frame();
+  //raster = input.get_next_frame();
+  //[[maybe_unused]] std::vector<uint8_t> output = encoder.encode_with_target_size( raster.get(), 7000 );
+  //cout << output.size() << endl;
 
   CongCtrl cc; 
   ABR abr {connection_id, encoder};
 
   [[maybe_unused]] auto start = chrono::system_clock::now();
 
-
-
   poller.add_action( Poller::Action( socket, Direction::Out, [&]() {
-    assert( pacer.ms_until_due() == 0 );
-    while ( pacer.ms_until_due() == 0 ) {
+    while ( pacer.micro_until_due() == 0 ) {
       assert( not pacer.empty() );
       string to_sent = pacer.front();
       socket.send( to_sent );
@@ -189,7 +179,7 @@ int main( int argc, char *argv[] )
     }
     return ResultType::Continue;
 }, [&]() { 
-  return pacer.ms_until_due() == 0; } ) );
+  return pacer.micro_until_due() == 0; } ) );
 
   poller.add_action( Poller::Action( socket, Direction::In,
     [&]()
@@ -208,10 +198,10 @@ int main( int argc, char *argv[] )
       uint32_t pkt_num = pkt_nums[ack.fec_frame_no_][ack.pkt_no_];
       std::chrono::duration<double, std::ratio<1,1000>> diff = (system_clock::now() - pkt_sent_time[pkt_num]); // in millis
       cc.onACK(pkt_num, diff.count());
-      cout << "Get Ack!" << ack.fec_frame_no_ <<" "<< ack.pkt_no_ << " " << diff.count() << endl;
+      cout << "Get Ack!" << ack.fec_frame_no_ << " " << ack.pkt_no_ << " " << diff.count() << endl;
       if (ack.fec_frame_no_ == 22 && ack.pkt_no_ == 10) {
         std::chrono::duration<double, std::ratio<1,1000>> diff = (system_clock::now() - start);
-        cout << "Finish in " << diff.count() <<"ms" << endl;
+        cout << "Finish in " << diff.count() << "ms" << endl;
       }
 
       return ResultType::Continue;

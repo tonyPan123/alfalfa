@@ -5,6 +5,7 @@
 #include <iostream>
 #include <string>
 #include <unordered_map>
+#include <set>
 
 #include "packet.hh"
 
@@ -33,6 +34,7 @@ class FECPre {
         uint32_t frame_no_end;
         unordered_map<uint32_t, std::vector<Packet>> frame_no_to_pkts;
         uint32_t total_len;
+        unordered_map<uint32_t, uint32_t> frame_no_to_timestamps;
 
         FECPre () {
             initialized = false;
@@ -50,7 +52,7 @@ class FECPre {
             total_len = 0;
         }
 
-        void add_frame (const uint32_t frame_no, const std::vector<Packet> packets) {
+        void add_frame (const uint32_t frame_no, const std::vector<Packet> packets, const uint32_t timestamp) {
             assert(!initialized || frame_no == frame_no_start + 1);
             assert(frame_no >= 1);
             if (!initialized) {
@@ -62,6 +64,7 @@ class FECPre {
             }
             frame_no_to_pkts[frame_no] = packets;
             total_len += packets.size();
+            frame_no_to_timestamps[frame_no] = timestamp;
         }
 
         void merge(FECPre & other) {
@@ -79,6 +82,7 @@ class FECPre {
             for (uint32_t frame_no = other.frame_no_start; frame_no <= other.frame_no_end; frame_no++) {
                 frame_no_to_pkts[frame_no] = other.frame_no_to_pkts[frame_no];
                 total_len += frame_no_to_pkts[frame_no].size();
+                frame_no_to_timestamps[frame_no] = other.frame_no_to_timestamps[frame_no];
             }
             assert(frame_no_end >= frame_no_start);
         }
@@ -96,8 +100,11 @@ class FECPacket {
         unordered_map<uint32_t, uint16_t> frame_no_to_length;
 
         uint16_t pkt_no_;
+        uint32_t timestamp;
 
         std::string payload_;
+
+        bool is_valid;
 
         FECPacket( const uint16_t connection_id_,
                    const uint32_t fec_frame_no_,
@@ -107,8 +114,10 @@ class FECPacket {
                    const uint32_t frame_no_end,
                    const unordered_map<uint32_t, uint16_t> frame_no_to_length,
                    const uint16_t pkt_no_,
+                   const uint32_t timestamp,
                    const std::string payload_);
         FECPacket( const Chunk & str );
+        FECPacket();
 
         std::string to_string() const ;
         static std::string put_header_field( const uint16_t n );
@@ -129,7 +138,17 @@ class FECFrame {
     unordered_map<uint32_t, uint16_t> frame_no_to_length;
     vector<FECPacket> pkts;
 
+    unordered_map<uint32_t, vector<FECPacket>> frame_no_to_received_data;
+    vector<FECPacket> fecs;
+
+    bool is_valid;
+
     FECFrame(uint32_t fec_frame_no, FECPre & pre, const uint16_t fec_length);
+    FECFrame(FECPacket & pkt);
+    FECFrame() : is_valid(false) {};
+    void addPacket(FECPacket & pkt);
+    void checkComplete(uint32_t frame_no);
+    void recover_loss();
 };
 
 

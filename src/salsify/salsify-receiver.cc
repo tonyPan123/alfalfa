@@ -119,8 +119,11 @@ void enqueue_frame( FramePlayer & player, const Chunk & frame )
   if ( frame.size() == 0 ) {
     return;
   }
-
+  //auto start = chrono::steady_clock::now();
   const Optional<RasterHandle> raster = player.decode( frame );
+  //auto next = chrono::steady_clock::now();
+  //uint32_t diff = chrono::duration_cast<std::chrono::milliseconds>(next - start).count();
+  //cout << "Encoding takes" << diff << endl;
   /*
   async( launch::async,
     [&raster]()

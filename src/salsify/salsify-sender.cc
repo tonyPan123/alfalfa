@@ -156,7 +156,7 @@ EncodeOutput do_encode_job( EncodeJob && encode_job )
 
   const auto encode_ending = system_clock::now();
   const auto ms_elapsed = duration_cast<milliseconds>( encode_ending - encode_beginning );
-
+  cout << ms_elapsed.count() << endl;
   return { move( encode_job.encoder ), move( output ), source_minihash, ms_elapsed, encode_job.name, quantizer_in_use };
 }
 
