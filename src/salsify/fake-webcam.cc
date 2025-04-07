@@ -46,6 +46,7 @@
 #include "slow_conv.hh"
 #include "slow_conv_manual.hh"
 #include "adaptive_stream.hh"
+#include "player.hh"
 
 #include "reed_solomon.hpp"
 
@@ -153,6 +154,33 @@ int main( int argc, char *argv[] )
   Encoder encoder = Encoder{ input.display_width(), input.display_height(),
     false /* two-pass */, REALTIME_QUALITY };
 
+
+  /* Playground Here!!! */ /*
+  Encoder encoder1 = Encoder{ input.display_width(), input.display_height(),
+    false , REALTIME_QUALITY };
+
+  Encoder encoder2 = Encoder{ input.display_width(), input.display_height(),
+    false , REALTIME_QUALITY };
+
+    Optional<RasterHandle> raster1 = input.get_next_frame();
+    Optional<RasterHandle> raster2 = input.get_next_frame();
+
+    auto output1 = encoder1.encode_with_target_size( raster1.get(),
+                                                        10000 );
+    auto output2 = encoder2.encode_with_target_size( raster2.get(),
+                                                        10000 );
+
+    cout << encoder1.minihash() << endl;
+    cout << encoder2.minihash() << endl;
+
+  Decoder decoder1 = {1280, 720};
+  Decoder decoder2 = {1280, 720};
+
+  decoder1.parse_and_decode_frame(output1);
+  decoder2.parse_and_decode_frame(output2);
+  cout << decoder1.minihash() << endl;
+  cout << decoder2.minihash() << endl;*/
+
   // Skip the first small header file
   //Optional<RasterHandle> raster = input.get_next_frame();
   //raster = input.get_next_frame();
@@ -198,11 +226,7 @@ int main( int argc, char *argv[] )
       uint32_t pkt_num = pkt_nums[ack.fec_frame_no_][ack.pkt_no_];
       std::chrono::duration<double, std::ratio<1,1000>> diff = (system_clock::now() - pkt_sent_time[pkt_num]); // in millis
       cc.onACK(pkt_num, diff.count());
-      cout << "Get Ack!" << ack.fec_frame_no_ << " " << ack.pkt_no_ << " " << diff.count() << endl;
-      if (ack.fec_frame_no_ == 22 && ack.pkt_no_ == 10) {
-        std::chrono::duration<double, std::ratio<1,1000>> diff = (system_clock::now() - start);
-        cout << "Finish in " << diff.count() << "ms" << endl;
-      }
+      //cout << "Get Ack!" << ack.fec_frame_no_ << " " << ack.pkt_no_ << " " << diff.count() << endl;
 
       return ResultType::Continue;
     } )
@@ -228,29 +252,34 @@ int main( int argc, char *argv[] )
       return ResultType::Continue;
     }, [&]() { 
       std::chrono::duration<double, std::ratio<1,1000>> diff = (system_clock::now() - fetch_start); // in millis
-      return diff.count() >= (33); 
+      return diff.count() >= (33) && !abr.stop_encode; 
     } ) 
   );
 
     // only send new frames after min_rtt
   int min_rtt = cc.beliefs.min_rtt;  
+  int count = 1;
   poller.add_action( Poller::Action( update_pipe.second, Direction::In, [&]() {
       update_pipe.second.read();
       // update history and state of cong_ctrl 
+      cout << "Timestamp: " << count << endl;
+      count++;
       auto before_update = system_clock::now();
       cc.updateHistory();
       cc.updateBeliefBound();
       auto after_update = system_clock::now();
       abr.add_fec(pacer, cc);
       auto after_fec = system_clock::now();
-      abr.encode_fetched_frames(cc.beliefs.min_c * Packet::MAXIMUM_PAYLOAD);
+      if (!abr.stop_encode) {
+        abr.encode_fetched_frames(cc.beliefs.min_c * Packet::MAXIMUM_PAYLOAD);
+      }
       last_sent = system_clock::now();
       std::chrono::duration<double, std::ratio<1,1000>> diff1 = (last_sent - after_fec);
       std::chrono::duration<double, std::ratio<1,1000>> diff2 = (after_update - before_update);
       std::chrono::duration<double, std::ratio<1,1000>> diff3 = (after_fec - after_update);
-      cout << "This update takes " << diff2.count() << endl; 
-      cout << "This fec takes " << diff3.count() << endl; 
-      cout << "This scheduling takes " << diff1.count() << endl; 
+      //cout << "This update takes " << diff2.count() << endl; 
+      //cout << "This fec takes " << diff3.count() << endl; 
+      //cout << "This scheduling takes " << diff1.count() << endl; 
       update_pipe.first.write( "1" );
       return ResultType::Continue;
     }, [&]() { 

@@ -21,6 +21,7 @@
 #include "procinfo.hh"
 
 #include "reed_solomon.hpp"
+#include "concurrent_queue.hh"
 
 using namespace std;
 using namespace std::chrono;
@@ -107,6 +108,11 @@ int main()
 
   unordered_map<uint32_t, FECFrame> frames;
 
+  uint32_t current_state = decoder.get_hash().hash();
+  unordered_map<uint32_t, Decoder> decoders { { current_state, decoder } };
+
+  ConcurrentQueue<FECPacket> pkts;
+
   Poller poller;
   poller.add_action( Poller::Action( socket, Direction::In,
     [&]()
@@ -118,11 +124,8 @@ int main()
       FECPacket fecpacket { new_fragment.payload };
       //std::chrono::duration<double, std::ratio<1,1000>> diff = (system_clock::now() - start);
       //cout << "Receive:" << fecpacket.fec_frame_no_ << " " << fecpacket.pkt_no_  << " " << diff.count() << endl;
-      if (!frames[fecpacket.fec_frame_no_].is_valid) {
-        frames[fecpacket.fec_frame_no_] = FECFrame {fecpacket};
-      } else {
-        frames[fecpacket.fec_frame_no_].addPacket(fecpacket);
-      }
+      pkts.push(fecpacket);
+
       AckFECPacket ack = AckFECPacket (connection_id, fecpacket.fec_frame_no_, fecpacket.pkt_no_, "");
       ack.sendto( socket, new_fragment.source_address );   
 
@@ -132,6 +135,19 @@ int main()
     },
     [&]() { return not socket.eof(); } )
   );
+
+  // Make sure decoder works serially 
+  thread([&frames, &pkts, &decoders]() {
+    while (true) {
+      FECPacket fecpacket = pkts.wait_and_pop();
+      if (!frames[fecpacket.fec_frame_no_].is_valid) {
+        frames[fecpacket.fec_frame_no_] = FECFrame {fecpacket};
+        frames[fecpacket.fec_frame_no_].addPacket(fecpacket, decoders);
+      } else {
+        frames[fecpacket.fec_frame_no_].addPacket(fecpacket, decoders);
+      }
+    }
+  }).detach();
 
   /* handle events */
   while ( true ) {
